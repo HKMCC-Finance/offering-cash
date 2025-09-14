@@ -1,0 +1,36 @@
+# Conda
+.env/
+.conda/
+*.conda
+*.env
+.venv/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# VSCode
+.vscode/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Output
+output/
+!data/README.md
+*.parquet
+build/
+dist/
+BC-40 UpperMonitor v13/
+
+# Test/Temp Files 
+tests/
+testing/
+
+# AmazonQ
+.amazonq/
+.amazonq/rules/
+
+# Others 
+.DS_Store

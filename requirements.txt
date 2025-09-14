@@ -1,0 +1,10 @@
+
+openpyxl
+pdfplumber
+pandas
+pyautogui
+easyocr
+opencv-python
+pyinstaller
+transformers
+word2number
