@@ -165,20 +165,20 @@ def launch_app(app_path, is_second_offering=False):
     """ Launch the cash counting application and set parameters """
     try:
         os.startfile(app_path)
-        time.sleep(1)
+        time.sleep(0.5)
 
         # Set the Port as "COM3"
         pyautogui.click(x=803, y=226)
-        time.sleep(0.5)
+        time.sleep(0.25)
         pyautogui.click(x=803, y=241)
 
         # Set the Baud Rate as 115200
         pyautogui.click(x=943, y=222)
-        time.sleep(0.5)
+        time.sleep(0.25)
         pyautogui.click(x=934, y=244)
 
         # Set the connection value to Open
-        time.sleep(0.5)
+        time.sleep(0.25)
         pyautogui.click(x=1020, y=224)
         
         confirm_completion(is_second_offering)
