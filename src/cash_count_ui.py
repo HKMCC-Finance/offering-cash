@@ -32,7 +32,7 @@ def find_latest_pdf(data_folder, date_str):
     return latest_pdf
 
 
-def process_pdf(pdf_file, output_dir, is_second_offering=False):
+def process_pdf(pdf_file, output_dir, is_second_offering=False, mass_time=None, populate_header=False):
     """ Processes the PDF and saves formatted data to an Excel file """
     df = pdf_to_dataframe(pdf_file)
     df = df[:-1]
@@ -46,6 +46,13 @@ def process_pdf(pdf_file, output_dir, is_second_offering=False):
     
     workbook = load_workbook(output_dir)
     sheet = workbook.active 
+    
+    # Populate date and time if this is the first time
+    if populate_header and mass_time:
+        current_date = datetime.today()
+        mass_date = current_date.strftime("%m/%d/%y")
+        sheet.cell(row=3, column=4, value=mass_date)
+        sheet.cell(row=3, column=6, value=mass_time)
     
     # First offering: columns C-D (col_idx 3-4), starting at row 7
     # Second offering: columns E-F (col_idx 5-6), starting at row 7
@@ -89,7 +96,7 @@ def process_cash_count_data(is_second_offering=False):
                 import shutil
                 shutil.copy(template_path, output_dir)
         
-        process_pdf(pdf_file, output_dir, is_second_offering)
+        process_pdf(pdf_file, output_dir, is_second_offering, mass_time_var.get(), not is_second_offering)
         
         offering_type = "2차" if is_second_offering else "1차"
         success_message = f"{offering_type} 헌금 현금 부분의 헌금보고서 생성이 완료됐습니다."
