@@ -10,6 +10,11 @@ import pandas as pd
 from openpyxl import load_workbook
 import subprocess
 
+# Holds the first offering's per-denomination counts so the second offering
+# (which the BC-40 reports cumulatively within a session) can be derived by subtraction.
+first_offering_df = None
+
+
 def pdf_to_dataframe(pdf_path):
     """ Extracts table data from a single-page PDF and returns it as a pandas DataFrame. """
     df = pd.DataFrame()
@@ -32,39 +37,56 @@ def find_latest_pdf(data_folder, date_str):
     return latest_pdf
 
 
-def process_pdf(pdf_file, output_dir, is_second_offering=False, mass_time=None, populate_header=False):
+def process_pdf(pdf_file, output_dir, is_second_offering=False, mass_time=None, populate_header=False, previous_df=None):
     """ Processes the PDF and saves formatted data to an Excel file """
     df = pdf_to_dataframe(pdf_file)
     df = df[:-1]
     df['DENO'] = df['DENO'].astype(int)
     df['AMT'] = df['AMT'].astype(int)
     df['QTY'] = df['QTY'].astype(int)
-    df = df.sort_values(by='DENO', ascending=True)
-    df.rename(columns={'AMT': 'Amount'}, inplace=True)
-    df.reset_index(inplace=True, drop=True)
-    df.drop(columns='DENO', inplace=True)
-    
+    df = df.sort_values(by='DENO', ascending=True).reset_index(drop=True)
+
+    # BC-40 reports cumulative totals within a single session. For the second
+    # offering, subtract the first offering's counts per denomination so the
+    # 2차 columns reflect only the second offering.
+    if is_second_offering and previous_df is not None:
+        merged = df.merge(previous_df[['DENO', 'QTY', 'AMT']], on='DENO', how='left', suffixes=('', '_prev'))
+        merged['QTY_prev'] = merged['QTY_prev'].fillna(0).astype(int)
+        merged['AMT_prev'] = merged['AMT_prev'].fillna(0).astype(int)
+        merged['QTY'] = merged['QTY'] - merged['QTY_prev']
+        merged['AMT'] = merged['AMT'] - merged['AMT_prev']
+        # Keep every denomination row (including zeros) so the 2차 columns stay
+        # aligned with the 1차 columns and column B's denomination labels.
+        df = merged[['DENO', 'QTY', 'AMT']].reset_index(drop=True)
+
+    # Snapshot the keyed data before we drop DENO so the first offering can be
+    # reused for subtraction later.
+    raw_df = df.copy()
+
+    df = df.rename(columns={'AMT': 'Amount'}).drop(columns='DENO')
+
     workbook = load_workbook(output_dir)
-    sheet = workbook.active 
-    
+    sheet = workbook.active
+
     # Populate date and time if this is the first time
     if populate_header and mass_time:
         current_date = datetime.today()
         mass_date = current_date.strftime("%m/%d/%y")
         sheet.cell(row=3, column=4, value=mass_date)
         sheet.cell(row=3, column=6, value=mass_time)
-    
+
     # First offering: columns C-D (col_idx 3-4), starting at row 7
     # Second offering: columns E-F (col_idx 5-6), starting at row 7
     # Both use the same row offset (5), but different column offsets
     row_offset = 5
     col_offset = 2 if not is_second_offering else 4  # First offering: +2, Second offering: +4
-    
+
     for row_idx, row in enumerate(df.itertuples(index=False), start=2):
         for col_idx, value in enumerate(row, start=1):
             sheet.cell(row=row_idx+row_offset, column=col_idx+col_offset, value=value)
-    
+
     workbook.save(output_dir)
+    return raw_df
 
 
 def open_output_directory(output_folder):
@@ -74,29 +96,35 @@ def open_output_directory(output_folder):
 
 def process_cash_count_data(is_second_offering=False):
     """ Executes the full process of locating and processing the PDF """
+    global first_offering_df
     cash_run_date = datetime.today().strftime("%Y%m%d")
     data_folder = "E:\\CashCounting\\BC-40 UpperMonitor v13\\Release\\Data"
     pdf_file = find_latest_pdf(data_folder, cash_run_date)
-    
+
     if pdf_file:
         run_date = datetime.today().strftime("%m-%d-%Y")
         output_folder = os.path.join("E:\\헌금보고서", run_date)
         os.makedirs(output_folder, exist_ok=True)
         output_dir = os.path.join(output_folder, f'헌금보고서_{run_date}_{mass_time_var.get()}미사.xlsx')
-        
+
         # If it's the second offering, the file should already exist from the first offering
         if is_second_offering and not os.path.exists(output_dir):
             messagebox.showerror("Error", "첫 번째 헌금 보고서 파일을 찾을 수 없습니다. 먼저 1차 헌금을 처리하십시오.")
             return
-        
+
         # If it's the first offering and the file doesn't exist, copy the template
         if not is_second_offering and not os.path.exists(output_dir):
             template_path = "E:\\헌금보고서\\헌금보고서_양식.xlsx"
             if os.path.exists(template_path):
                 import shutil
                 shutil.copy(template_path, output_dir)
-        
-        process_pdf(pdf_file, output_dir, is_second_offering, mass_time_var.get(), not is_second_offering)
+
+        previous_df = first_offering_df if is_second_offering else None
+        raw_df = process_pdf(pdf_file, output_dir, is_second_offering, mass_time_var.get(), not is_second_offering, previous_df=previous_df)
+
+        # Remember the first offering so the second offering can subtract it.
+        if not is_second_offering:
+            first_offering_df = raw_df
         
         offering_type = "2차" if is_second_offering else "1차"
         success_message = f"{offering_type} 헌금 현금 부분의 헌금보고서 생성이 완료됐습니다."
