@@ -1,243 +1,445 @@
-## Load dependencies 
-import re
-import os
-import pandas as pd
-import cv2
-import easyocr
-from tqdm import tqdm 
-from transformers import TrOCRProcessor, VisionEncoderDecoderModel
-from word2number import w2n
-from PIL import Image
-from openpyxl import load_workbook
+"""Scanned-check processing: OCR the payer name and amount, fill the report.
+
+Changes from the original single-pass version:
+
+* Images are processed in a deterministic, explicit order (default: the order
+  they were scanned) so a row in the spreadsheet corresponds to the Nth check
+  in the physical stack.
+* The amount is read from both the courtesy box and the legal line and the two
+  are reconciled; disagreements are flagged instead of silently accepted.
+* The OCR engine is pluggable, so a replacement can be benchmarked against the
+  current one without rewriting this file.
+* Every read is written to a review sidecar file with the raw OCR text, so a
+  volunteer can check the flagged minority instead of proofreading all of them.
+"""
+
 import argparse
-import torch
+import csv
+import difflib
+import os
+import re
+import unicodedata
+from dataclasses import dataclass, field
+from typing import List, Optional, Sequence
 
-def extract_amount(image_path, processor, model):
+import pandas as pd
+from openpyxl import load_workbook
+from openpyxl.styles import PatternFill
+from tqdm import tqdm
+
+from check_fields import (
+    AmountReading,
+    crop,
+    load_rois,
+    parse_courtesy_amount,
+    parse_legal_amount,
+    reconcile_amount,
+    upscale,
+)
+from check_summary import DEFAULT_PREDEFINED_AMOUNTS, build_check_summary, write_check_summary
+from ocr import get_backend
+from report_layout import apply_print_layout
+
+# Where the check block lives in the report. These match the original code's
+# offsets; confirm them against the production template before changing.
+CHECK_START_ROW = 4
+SEQ_COL = 9          # 순번
+CHECK_NUM_COL = 10   # CHECK #
+PAYER_COL = 11       # 발행자
+AMOUNT_COL = 12      # 금액
+
+REVIEW_FILL = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid")
+
+
+# --------------------------------------------------------------------------
+# Ordering
+# --------------------------------------------------------------------------
+
+def natural_key(name: str):
+    """Sort key that orders embedded numbers numerically ('_2' before '_10')."""
+    return [int(part) if part.isdigit() else part.lower()
+            for part in re.split(r"(\d+)", name)]
+
+
+def list_check_images(directory: str, suffix: str = "Front.tif",
+                      order: str = "scan") -> List[str]:
+    """Return check image paths in a deterministic order.
+
+    os.listdir() alone returns filesystem order, which on NTFS is lexicographic
+    by filename. Since the scanner names files after the MICR check number, that
+    produced a spreadsheet sorted by check number rather than by scan order -
+    the reported problem. The default here is 'scan': oldest file first, which
+    is the order the sheets physically went through the scanner.
     """
-    Extracts a numeric amount from a specified region in an image using OCR.
+    names = [f for f in os.listdir(directory) if f.endswith(suffix)]
+    paths = [os.path.join(directory, f) for f in names]
 
-    Inputs:
-    - image_path (str): Path to the image file containing the text to extract.
-    - processor (object): Preprocessor for converting image data into model input format.
-    - model (object): Text recognition model for extracting text from images.
+    if order == "scan":
+        # Ties (same-second writes) fall back to natural filename order so the
+        # result is stable rather than arbitrary.
+        paths.sort(key=lambda p: (os.path.getmtime(p), natural_key(os.path.basename(p))))
+    elif order == "filename":
+        paths.sort(key=lambda p: natural_key(os.path.basename(p)))
+    elif order == "checknum":
+        paths.sort(key=lambda p: (parse_check_number(os.path.basename(p)) or 0,
+                                  natural_key(os.path.basename(p))))
+    else:
+        raise ValueError(f"Unknown order {order!r}; expected scan, filename or checknum")
+    return paths
 
-    Outputs:
-    - Extracted amount (str): Numeric string of the recognized amount, e.g., "125".
-    - None: Returned if no valid amount is recognized.    
+
+def parse_check_number(filename: str) -> Optional[int]:
+    """Pull the check number out of the scanner's filename.
+
+    The original code assumed exactly '<prefix>_<number>_Front.tif' and would
+    raise on anything else. Fall back to the last number in the name.
     """
+    stem = os.path.splitext(os.path.basename(filename))[0]
+    parts = stem.split("_")
+    if len(parts) > 1 and parts[1].isdigit():
+        return int(parts[1])
+    numbers = re.findall(r"\d+", stem)
+    return int(numbers[-1]) if numbers else None
 
-    # Load the image
+
+# --------------------------------------------------------------------------
+# Name handling
+# --------------------------------------------------------------------------
+
+def extract_address_and_names(name_text: str):
+    """Split a payer block into names and address.
+
+    Anything from the first comma-separated part that starts with a digit
+    onwards is treated as the street address.
+    """
+    parts = name_text.split(",")
+    names, address_parts = [], []
+    found_address = False
+    for part in parts:
+        part = part.strip()
+        if not found_address and re.match(r"^\d+", part):
+            found_address = True
+        (address_parts if found_address else names).append(part)
+    return (", ".join(names) if names else None,
+            ", ".join(address_parts) if address_parts else None)
+
+
+def _normalise_name(name: str) -> str:
+    name = unicodedata.normalize("NFKD", name or "")
+    name = re.sub(r"[^a-zA-Z가-힣\s]", " ", name)
+    return re.sub(r"\s+", " ", name).strip().lower()
+
+
+def load_roster(path: Optional[str]) -> List[str]:
+    """Load a donor roster (one name per line, or a CSV with a name column)."""
+    if not path or not os.path.exists(path):
+        return []
+    names = []
+    with open(path, "r", encoding="utf-8-sig", newline="") as handle:
+        sample = handle.read(2048)
+        handle.seek(0)
+        if "," in sample:
+            reader = csv.DictReader(handle)
+            key = None
+            for candidate in ("name", "Name", "발행자", "이름", "성명"):
+                if reader.fieldnames and candidate in reader.fieldnames:
+                    key = candidate
+                    break
+            if key:
+                names = [row[key] for row in reader if row.get(key)]
+            else:
+                handle.seek(0)
+                names = [line.split(",")[0].strip() for line in handle if line.strip()]
+        else:
+            names = [line.strip() for line in handle if line.strip()]
+    return [n for n in names if n]
+
+
+def match_roster(name: Optional[str], roster: Sequence[str],
+                 threshold: float = 0.82):
+    """Snap an OCR'd name to the closest roster entry.
+
+    Returns (resolved_name, score, matched). A roster is the single biggest
+    available lever on name accuracy: the search space collapses from "any
+    string" to "one of N known donors".
+    """
+    if not name or not roster:
+        return name, None, False
+    normalised = _normalise_name(name)
+    if not normalised:
+        return name, None, False
+    lookup = {_normalise_name(entry): entry for entry in roster}
+    candidates = difflib.get_close_matches(normalised, list(lookup), n=1, cutoff=threshold)
+    if not candidates:
+        return name, None, False
+    best = candidates[0]
+    score = difflib.SequenceMatcher(None, normalised, best).ratio()
+    return lookup[best], round(score, 3), True
+
+
+# --------------------------------------------------------------------------
+# Extraction
+# --------------------------------------------------------------------------
+
+@dataclass
+class CheckRecord:
+    sequence: int
+    filename: str
+    check_number: Optional[int]
+    payer_name: Optional[str]
+    payer_name_raw: str = ""
+    name_confidence: Optional[float] = None
+    roster_matched: bool = False
+    roster_score: Optional[float] = None
+    amount: Optional[float] = None
+    amount_status: str = "unreadable"
+    courtesy_amount: Optional[float] = None
+    legal_amount: Optional[float] = None
+    courtesy_text: str = ""
+    legal_text: str = ""
+    needs_review: bool = False
+    notes: List[str] = field(default_factory=list)
+
+
+def read_amount(image, backend, rois, prefer: str = "courtesy") -> AmountReading:
+    """Read the courtesy box and the legal line, then reconcile them."""
+    courtesy_text = legal_text = ""
+    courtesy_value = legal_value = None
+
+    if "courtesy_amount" in rois:
+        try:
+            region = upscale(crop(image, rois["courtesy_amount"]))
+            courtesy_text = backend.read_handwriting(region).text
+            courtesy_value = parse_courtesy_amount(courtesy_text)
+        except Exception:
+            courtesy_text, courtesy_value = "", None
+
+    if "legal_amount" in rois:
+        try:
+            region = upscale(crop(image, rois["legal_amount"]))
+            legal_text = backend.read_handwriting(region).text
+            legal_value = parse_legal_amount(legal_text)
+        except Exception:
+            legal_text, legal_value = "", None
+
+    value, status, needs_review = reconcile_amount(courtesy_value, legal_value, prefer=prefer)
+    return AmountReading(value=value, courtesy=courtesy_value, legal=legal_value,
+                         status=status, needs_review=needs_review,
+                         courtesy_text=courtesy_text, legal_text=legal_text)
+
+
+def extract_check(image_path: str, backend, rois, sequence: int,
+                  roster: Sequence[str] = (), prefer_amount: str = "courtesy",
+                  name_confidence_floor: float = 0.5) -> CheckRecord:
+    """OCR a single check image into a CheckRecord."""
+    import cv2  # imported here so ordering/report helpers work without OpenCV
+
+    record = CheckRecord(sequence=sequence, filename=os.path.basename(image_path),
+                         check_number=parse_check_number(image_path), payer_name=None)
+
     image = cv2.imread(image_path)
     if image is None:
-        raise ValueError(f"Image not found at {image_path}")
-        
-    (height, width, _) = image.shape
+        record.notes.append("image could not be read")
+        record.needs_review = True
+        return record
 
-    # Define ROI parameters
-    y_start = int(height * 0.45)
-    y_end = int(height * 0.565)
-    x_start = int(width * 0.05)
-    initial_x_end = int(width * 0.5)
-    final_x_end = int(width * 0.14)
-    step = int(width * 0.025)
+    try:
+        name_result = backend.read_printed(upscale(crop(image, rois["payer_name"])))
+        record.payer_name_raw = name_result.text
+        record.name_confidence = name_result.confidence
+        names, _ = extract_address_and_names(name_result.text)
+        record.payer_name = names
+    except Exception as exc:
+        record.notes.append(f"name OCR failed: {exc}")
+        record.needs_review = True
 
-    # Iterate over decreasing ROI widths
-    for x_end in range(initial_x_end, final_x_end - 1, -step):
-        # Extract the ROI
-        roi = image[y_start:y_end, x_start:x_end]
+    resolved, score, matched = match_roster(record.payer_name, roster)
+    record.payer_name = resolved
+    record.roster_score = score
+    record.roster_matched = matched
 
-        # Convert the ROI to RGB
-        roi_rgb = cv2.cvtColor(roi, cv2.COLOR_BGR2RGB)
+    amount = read_amount(image, backend, rois, prefer=prefer_amount)
+    record.amount = amount.value
+    record.amount_status = amount.status
+    record.courtesy_amount = amount.courtesy
+    record.legal_amount = amount.legal
+    record.courtesy_text = amount.courtesy_text
+    record.legal_text = amount.legal_text
+    if amount.needs_review:
+        record.needs_review = True
+        record.notes.append(f"amount {amount.status}")
 
-        # Convert to PIL Image
-        roi_image = Image.fromarray(roi_rgb)
+    if not record.payer_name:
+        record.needs_review = True
+        record.notes.append("name empty")
+    elif roster and not matched:
+        record.needs_review = True
+        record.notes.append("no roster match")
+    elif (record.name_confidence is not None
+          and record.name_confidence < name_confidence_floor):
+        record.needs_review = True
+        record.notes.append(f"low name confidence {record.name_confidence:.2f}")
 
-        # Preprocess the image
-        pixel_values = processor(images=roi_image, return_tensors="pt").pixel_values
-
-        # Generate text
-        generated_ids = model.generate(pixel_values, max_new_tokens=20)
-        recognized_text = processor.batch_decode(generated_ids, skip_special_tokens=True)[0]
-
-        # Attempt to convert recognized text to a number
-        try:
-            amount_value = w2n.word_to_num(recognized_text)
-            return str(amount_value)
-        except ValueError:
-            # If conversion fails, continue to the next ROI width
-            continue
-
-    # If all attempts fail, raise an error
-    return None
-
-def extract_address_and_names(name_text):
-    """
-    Separates names and addresses from a given text, treating text starting with numbers as the address.
-
-    Inputs:
-    - name_text (str): Text containing names and address information separated by commas.
-
-    Outputs:
-    - names_text (str or None): Concatenated names as a single string, or None if no names are found.
-    - address_text (str or None): Concatenated address as a single string, or None if no address is found.
-    """
-    # Split the text into parts by commas
-    parts = name_text.split(",")
-    
-    # Initialize variables for names and address
-    names = []
-    address_parts = []
-
-    # Flag to indicate if we are in the address section
-    found_address = False
-
-    # Loop through parts to classify as name or address
-    for part in parts:
-        part = part.strip()  # Clean up extra whitespace
-
-        if not found_address and re.match(r'^\d+', part):
-            # First part that starts with a numeric value marks the start of the address
-            found_address = True
-        
-        if found_address:
-            # Add to address if it's part of the address
-            address_parts.append(part)
-        else:
-            # Otherwise, add to names
-            names.append(part)
-
-    # Join names and address into single strings
-    names_text = ", ".join(names) if names else None
-    address_text = ", ".join(address_parts) if address_parts else None
-    
-    return names_text, address_text
+    return record
 
 
-def extract_check_info(image_path, reader, processor, model):
-    """
-    Extracts names, address, and check donation amount information from a given image.
+# --------------------------------------------------------------------------
+# Output
+# --------------------------------------------------------------------------
 
-    Inputs:
-    - image_path (str): Path to the image file containing the check information.
-    - reader (object): OCR reader for extracting text from specific regions in the image.
-    - processor (object): Preprocessor for converting image data into model input format (for amount extraction).
-    - model (object): Text recognition model for extracting the donation amount.
-
-    Outputs:
-    - names_text (str or None): Concatenated names as a single string, or None if no names are found.
-    - amount_text (str or None): Numeric string of the donation amount, e.g., "125", or None if no amount is recognized.
-    """
-    
-    # Load the image using OpenCV
-    image = cv2.imread(image_path)
-    
-    # Get the height and width of the grayscale image
-    (height, width, _) = image.shape
-    
-    ## Name and Address
-    # Define the region of interest (ROI) for names (top-left corner)
-    roi_name = image[0:int(height * 0.3), 0:int(width * 0.5)]
-    
-    # Use selected OCR model to read text from the names ROI
-    name_results = reader.readtext(roi_name)
-    name_text = ", ".join([res[1] for res in name_results])  # Combine all detected texts
-    names_text, _ = extract_address_and_names(name_text)
-    
-    ## Check Donation Amount
-    amount_text = extract_amount(image_path, processor, model)
-    
-    # Return the extracted text for names and donation amount
-    return names_text, amount_text
+def records_to_frame(records: Sequence[CheckRecord]) -> pd.DataFrame:
+    """Report-shaped frame: 순번 / CHECK # / 발행자 / 금액, in scan order."""
+    return pd.DataFrame([{
+        "순번": r.sequence,
+        "CHECK #": r.check_number,
+        "발행자": r.payer_name,
+        "금액": r.amount,
+    } for r in records])
 
 
-def process_checks(check_directory, reader, processor, model, output_filename):
-    """
-    Process all scanned check images in a directory to extract Name, Address, and Donation Amount.
-    
-    Inputs:
-    - check_directory (str): Path to the directory containing scanned check images (.tif files).
-    - reader (easyocr.Reader): Initialized EasyOCR reader for text recognition.
-    - processor (object): Preprocessor for converting image data into model input format (for amount extraction).
-    - model (object): Text recognition model for extracting the donation amount.
-    - output_directory (str): Output directory where the xlsx file will be saved. 
-    """
-    # List to store extracted data for each check
-    data = []
-    tif_files = [file for file in os.listdir(check_directory) if file.endswith("Front.tif")]
-
-    # Iterate through all files in the directory
-    for file in tqdm(tif_files, desc="Processing Checks", unit="file"):
-        file_path = os.path.join(check_directory, file)
-
-        # Extract check number from filename
-        check_number = file.split('_')[1].split('.')[0]
-        
-        # Extract information from the check 
-        cleaned_names, cleaned_amount = extract_check_info(file_path, reader, processor, model)
-
-        # Append the extracted information to the data list
-        data.append({
-                "Names": cleaned_names,
-                "Check Number": check_number,
-                "DonationAmount": cleaned_amount
-        })
-
-    # Convert the collected data into a Pandas DataFrame and export as the xlsx file.
-    df = pd.DataFrame(data)
-    df.rename(columns = {
-    'Names': '발행자', 
-    'Check Number': 'CHECK #',
-    'DonationAmount': 'AMOUNT'
-        }, inplace=True)
-    
-    df['CHECK #'] = df['CHECK #'].astype(int)
-    df['AMOUNT'] = df['AMOUNT'].astype(float)
-    df.loc[:, '금액'] = df['AMOUNT']
-
-    column_order = ['CHECK #', '발행자', '금액']
-    df = df[column_order]
-    # workbook = load_workbook("C:\\Users\\hkmcc\\Documents\\Check Scanner execution\\Check_Table_Formatter.xlsx") # load the formatter 
-    workbook = load_workbook(output_filename) # load the formatter 
-    sheet = workbook.active    
-    count = 1
-    for row_idx, row in enumerate(df.itertuples(index=False), start=2):
-        sheet.cell(row=row_idx+2, column=9, value=count) 
-        count = count + 1
-        for col_idx, value in enumerate(row, start=1): 
-            sheet.cell(row=row_idx+2, column=col_idx+9, value=value)
-
-    workbook.save(output_filename)
+def write_review_sidecar(records: Sequence[CheckRecord], path: str) -> None:
+    """Write every read, raw OCR text included, for auditing and retuning."""
+    frame = pd.DataFrame([{
+        "순번": r.sequence,
+        "파일명": r.filename,
+        "CHECK #": r.check_number,
+        "발행자": r.payer_name,
+        "발행자_원본OCR": r.payer_name_raw,
+        "이름_신뢰도": r.name_confidence,
+        "명단_일치": r.roster_matched,
+        "명단_점수": r.roster_score,
+        "금액": r.amount,
+        "금액_숫자칸": r.courtesy_amount,
+        "금액_문자줄": r.legal_amount,
+        "금액_상태": r.amount_status,
+        "숫자칸_원본OCR": r.courtesy_text,
+        "문자줄_원본OCR": r.legal_text,
+        "검토필요": r.needs_review,
+        "비고": "; ".join(r.notes),
+    } for r in records])
+    if path.lower().endswith(".csv"):
+        frame.to_csv(path, index=False, encoding="utf-8-sig")
+    else:
+        frame.to_excel(path, index=False)
 
 
-## Execution
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--img_dir', metavar='path', required=True, help='image file directory')
-    parser.add_argument('--report_file', metavar='file', required=True, help='report file name')
-    args = parser.parse_args()
+def write_report(records: Sequence[CheckRecord], report_path: str, *,
+                 highlight_review: bool = True,
+                 summary_anchor: Optional[tuple] = None,
+                 predefined_amounts: Sequence[float] = DEFAULT_PREDEFINED_AMOUNTS,
+                 print_layout: bool = False) -> None:
+    """Fill the check block of the report workbook."""
+    workbook = load_workbook(report_path)
+    sheet = workbook.active
 
-    # Set main models 
-    print("Loading main models...")
-    if torch.cuda.is_available() :
-        print("Using GPU")
-    else :
-        print("GPU is not available")
-    reader = easyocr.Reader(['en'], gpu = torch.cuda.is_available(), model_storage_directory="C:\\Users\\8940\\.EasyOCR\\model")#, user_network_directory='C:/Users/8940/.EasyOCR/user_network')
-    trocr_processor = TrOCRProcessor.from_pretrained('microsoft/trocr-base-handwritten', use_fast=True)
-    trocr_model = VisionEncoderDecoderModel.from_pretrained('microsoft/trocr-base-handwritten')
+    for offset, record in enumerate(records):
+        row = CHECK_START_ROW + offset
+        sheet.cell(row=row, column=SEQ_COL, value=record.sequence)
+        sheet.cell(row=row, column=CHECK_NUM_COL, value=record.check_number)
+        sheet.cell(row=row, column=PAYER_COL, value=record.payer_name)
+        sheet.cell(row=row, column=AMOUNT_COL, value=record.amount)
+        if highlight_review and record.needs_review:
+            for column in (SEQ_COL, CHECK_NUM_COL, PAYER_COL, AMOUNT_COL):
+                sheet.cell(row=row, column=column).fill = REVIEW_FILL
+
+    if summary_anchor:
+        rows = build_check_summary([r.amount for r in records], predefined_amounts)
+        write_check_summary(sheet, rows, start_row=summary_anchor[0],
+                            amount_col=summary_anchor[1])
+
+    if print_layout:
+        apply_print_layout(sheet)
+
+    workbook.save(report_path)
+
+
+def process_checks(check_directory: str, report_filename: str, *, backend,
+                   order: str = "scan", roi_path: Optional[str] = None,
+                   roster_path: Optional[str] = None,
+                   review_path: Optional[str] = None,
+                   prefer_amount: str = "courtesy",
+                   highlight_review: bool = True,
+                   summary_anchor: Optional[tuple] = None,
+                   print_layout: bool = False) -> List[CheckRecord]:
+    """Process every check image in a directory into the report."""
+    rois = load_rois(roi_path)
+    roster = load_roster(roster_path)
+    paths = list_check_images(check_directory, order=order)
+    if not paths:
+        raise FileNotFoundError(f"No '*Front.tif' images found in {check_directory}")
+
+    records = [
+        extract_check(path, backend, rois, sequence=index, roster=roster,
+                      prefer_amount=prefer_amount)
+        for index, path in enumerate(tqdm(paths, desc="Processing Checks", unit="file"), start=1)
+    ]
+
+    write_report(records, report_filename, highlight_review=highlight_review,
+                 summary_anchor=summary_anchor, print_layout=print_layout)
+
+    review_path = review_path or os.path.splitext(report_filename)[0] + "_검토.xlsx"
+    write_review_sidecar(records, review_path)
+
+    flagged = sum(1 for r in records if r.needs_review)
+    print(f"\nProcessed {len(records)} checks; {flagged} flagged for review.")
+    print(f"Review sheet: {review_path}")
+    return records
+
+
+def _parse_anchor(value: Optional[str]):
+    if not value:
+        return None
+    try:
+        row, col = value.split(",")
+        return int(row), int(col)
+    except ValueError:
+        raise argparse.ArgumentTypeError("--summary-anchor expects 'row,col', e.g. 20,9")
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description="Process scanned checks into the offering report.")
+    parser.add_argument("--img_dir", metavar="path", required=True, help="image file directory")
+    parser.add_argument("--report_file", metavar="file", required=True, help="report file name")
+    parser.add_argument("--backend", default="legacy",
+                        help="OCR backend: legacy, paddleocr, qwen-vl")
+    parser.add_argument("--order", default="scan", choices=("scan", "filename", "checknum"),
+                        help="row order in the report (default: scan order)")
+    parser.add_argument("--roi-config", default=None, help="JSON file of ROI boxes")
+    parser.add_argument("--roster", default=None, help="donor roster CSV/TXT for name matching")
+    parser.add_argument("--review-file", default=None, help="where to write the review sheet")
+    parser.add_argument("--prefer-amount", default="courtesy", choices=("courtesy", "legal"),
+                        help="which read wins when the two amounts disagree")
+    parser.add_argument("--summary-anchor", default=None,
+                        help="'row,col' anchor for the 수표정리 summary block")
+    parser.add_argument("--no-highlight", action="store_true",
+                        help="do not shade rows that need review")
+    parser.add_argument("--print-layout", action="store_true",
+                        help="apply the print layout after writing")
+    args = parser.parse_args(argv)
+
+    print(f"Loading OCR backend: {args.backend}")
+    backend = get_backend(args.backend)
+    backend.warmup()
     print("Model loading complete.")
+    print(f"Image file directory: {args.img_dir}")
+    print(f"Report file name: {args.report_file}")
+    print(f"Row order: {args.order}")
 
-    check_image_dir = args.img_dir
-    report_filename = args.report_file
-    print("Image file directory: " + check_image_dir)
-    print("Report file name: " + report_filename)
-
-    # Process scanned images and save the csv file 
-    print("Processing scanned check images...")
-    process_checks(check_directory=check_image_dir, 
-                    reader=reader, 
-                    processor=trocr_processor, 
-                    model=trocr_model,
-                    output_filename=report_filename)
-        
+    process_checks(
+        check_directory=args.img_dir,
+        report_filename=args.report_file,
+        backend=backend,
+        order=args.order,
+        roi_path=args.roi_config,
+        roster_path=args.roster,
+        review_path=args.review_file,
+        prefer_amount=args.prefer_amount,
+        highlight_review=not args.no_highlight,
+        summary_anchor=_parse_anchor(args.summary_anchor),
+        print_layout=args.print_layout,
+    )
     print("Processing and file export complete.")
+
+
+if __name__ == "__main__":
+    main()

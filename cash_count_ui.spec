@@ -3,7 +3,7 @@
 
 a = Analysis(
     ['src\\cash_count_ui.py'],
-    pathex=[],
+    pathex=['src'],
     binaries=[],
     datas=[],
     hiddenimports=[],

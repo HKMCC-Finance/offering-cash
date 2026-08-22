@@ -1,10 +1,22 @@
-
+# Core - needed by both the cash app and the check scanner
 openpyxl
 pdfplumber
 pandas
 pyautogui
-easyocr
-opencv-python
 pyinstaller
+
+# Check scanning (OCR)
+opencv-python
+tqdm
+torch
+easyocr
 transformers
-word2number
+
+# Optional OCR backends - install only the one being benchmarked.
+# See src/ocr/backends.py and src/benchmark_ocr.py.
+#   paddleocr        # --backend paddleocr
+#   accelerate       # --backend qwen-vl (also needs a GPU)
+
+# word2number was removed: the legal-amount parser in src/check_fields.py
+# replaces it. It raised on any unexpected token, which forced the old
+# "shrink the ROI until it parses" retry loop that accepted partial matches.
