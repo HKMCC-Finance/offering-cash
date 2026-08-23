@@ -1,0 +1,7 @@
+{
+  "_comment": "Fractional (x0, y0, x1, y1) regions on a scanned check. Retune these against real scans at the church - they are standard-layout estimates, not measured values.",
+  "payer_name": [0.02, 0.02, 0.55, 0.22],
+  "courtesy_amount": [0.70, 0.30, 0.99, 0.52],
+  "legal_amount": [0.03, 0.48, 0.88, 0.66],
+  "memo": [0.03, 0.78, 0.50, 0.93]
+}
