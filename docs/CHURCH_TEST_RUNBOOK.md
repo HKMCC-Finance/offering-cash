@@ -70,9 +70,30 @@ behaviour is on record.
 **The key question:** open both PDFs side by side — is the second one cumulative
 (1차 + 2차) or standalone? The whole subtraction rests on it being cumulative.
 
-If the app stops with `기계가 초기화된 것으로 보입니다`, that is **not a failure**.
-It means the second report is standalone, the cumulative assumption is wrong, and
-`subtract_offering()` needs inverting. Record it and move on.
+> **Largely answered already, from the PDFs already on this PC (2026-08-22).**
+> Parsing the archived reports under
+> `BC-40 UpperMonitor v13\Release\Data\<date>\` with the new `cash_data.py`:
+>
+> - **2026-08-16** — 6 consecutive reports, 12:24 → 12:35. Every denomination is
+>   monotonically non-decreasing across all six ($1,854 → $3,802 → $4,707 →
+>   $5,158 → $6,709 → $7,389). Within an uninterrupted session the BC-40 is
+>   **cumulative**, so `subtract_offering()` has the right sign.
+> - **2026-08-09** — 15 reports, and **4 of the transitions go negative**
+>   (e.g. `[-308, -1, -280, -139, -64, 0, 0]`). The machine *does* get cleared
+>   during a working day.
+>
+> So the cumulative assumption is correct, and the machine-reset guard is not
+> theoretical — it will fire in real use. Still worth confirming live, but treat
+> `기계가 초기화된 것으로 보입니다` as "the machine was cleared, re-pair the PDFs",
+> **not** as evidence the subtraction needs inverting.
+
+If the app stops with `기계가 초기화된 것으로 보입니다`, that is **not a failure** —
+see the box above. Note which two PDFs were involved and move on.
+
+Related risk worth watching: on a day with many reports (2026-08-09 had 15), the
+1차 PDF is picked by "most recent file", so an extra test count between offerings
+can pair the wrong two reports. If the 2차 numbers look wrong, check the file
+times in the Data folder before suspecting the arithmetic.
 
 Then the restart case, the main suspect for the original bug:
 
@@ -210,7 +231,7 @@ For whoever picks this up after the test. Each open question maps to one place.
 |---|---|
 | Denomination labels in column A or B? | ~~`src/cash_count_ui.py:55-59`~~ — **confirmed column B, offsets correct**, see step 1 |
 | Check block row/columns in the template | ~~`src/check_scan.py:45-49`~~ — **confirmed row 3/cols I-L, offsets correct**, see step 1 |
-| Is the 2차 PDF cumulative or standalone? | `src/cash_data.py:102` `subtract_offering()` — if standalone, skip the subtraction and write the frame directly |
+| Is the 2차 PDF cumulative or standalone? | **Cumulative — confirmed** from archived PDFs (see step 2); `subtract_offering()` sign is correct. Resets between reports do occur, which is what the negative guard is for. No change expected in `src/cash_data.py:102` |
 | Which `--order` matched the physical stack? | `src/check_scan.py` `list_check_images()` — make the winner the default |
 | Where do the `$` box and written line actually sit? | `src/check_rois.json` (defaults in `src/check_fields.py:27`) |
 | Correct predefined check amounts | `src/check_summary.py:14` `DEFAULT_PREDEFINED_AMOUNTS` — **already known to be wrong**: production is $5/10/15/20/25/30/45/50/100/200/600, not $5/10/20/25/50/100; not yet fixed, and `--summary-anchor` should not be used until it is (see step 5) |

@@ -347,7 +347,15 @@ python src/selftest.py    <span class="c"># expect: 47 passed, 0 failed</span></
     </ul>
     <div class="note">
       <span class="note-label">Watch for</span>
-      <p>Open both PDFs side by side and answer one question: <strong>is the second PDF cumulative (1차 + 2차) or standalone?</strong> The whole subtraction rests on it being cumulative. If it is standalone, the app will now stop with a "기계가 초기화된 것으로 보입니다" warning rather than writing negative quantities — that warning appearing is a <em>correct</em> result, and tells us the fix needs inverting.</p>
+      <p>Open both PDFs side by side and answer one question: <strong>is the second PDF cumulative (1차 + 2차) or standalone?</strong> The whole subtraction rests on it being cumulative.</p>
+      <div class="note key">
+        <span class="note-label">Largely answered already (2026-08-22)</span>
+        <p>Parsing the PDFs already archived on this PC under <code>BC-40 UpperMonitor v13\Release\Data\&lt;date&gt;\</code> with the new <code>cash_data.py</code>:</p>
+        <p><strong>2026-08-16</strong> — 6 consecutive reports (12:24 → 12:35), every denomination monotonically non-decreasing ($1,854 → $3,802 → $4,707 → $5,158 → $6,709 → $7,389). Within an uninterrupted session the BC-40 is <strong>cumulative</strong>, so <code>subtract_offering()</code> has the right sign.</p>
+        <p><strong>2026-08-09</strong> — 15 reports, <strong>4 transitions go negative</strong> (e.g. <code>[-308, -1, -280, -139, -64, 0, 0]</code>). The machine really does get cleared during a working day, so the reset guard is not theoretical.</p>
+        <p>Treat a "기계가 초기화된 것으로 보입니다" warning as <em>the machine was cleared, re-pair the PDFs</em> — <strong>not</strong> as evidence the subtraction needs inverting.</p>
+      </div>
+      <p>Related risk: on a day with many reports, the 1차 PDF is picked by "most recent file", so an extra test count between offerings can pair the wrong two reports. If the 2차 numbers look wrong, check the file times in the Data folder before suspecting the arithmetic.</p>
     </div>
     <p>Then test the restart case, which is my main suspect for the original bug:</p>
     <ul class="checks">
