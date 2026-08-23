@@ -4,7 +4,7 @@ Everything testable away from the hardware already passes (`python src/selftest.
 47 checks). This covers what only the BC-40, the check scanner and the printer can
 answer. Work through it in order — step 1 decides whether the rest is meaningful.
 
-Branch: `fix/check-ocr-and-report-layout`. Estimated 60–90 minutes.
+Merged to `main` 2026-08-22. Estimated 60–90 minutes.
 
 A formatted version of this document with tick-off checkboxes:
 <https://claude.ai/code/artifact/79d961cc-14f1-471a-9af6-8630f2a24c0f>
@@ -14,39 +14,43 @@ A formatted version of this document with tick-off checkboxes:
 
 ## 0. Get the code — 2 min
 
-On the church PC, in the existing repo folder:
+This fix was merged straight to `main` on 2026-08-22 (after the column-offset check in
+step 1 below was confirmed against the production template) rather than waiting on
+these on-site steps, so `main` itself is **not** a safe rollback target anymore — it
+already has the fix. On the church PC, in the existing repo folder:
 
 ```
 git fetch origin
-git checkout fix/check-ocr-and-report-layout
+git checkout main
 git pull
 
 python src/selftest.py    # expect: 47 passed, 0 failed
 ```
 
-`main` is untouched. If anything goes wrong mid-count, `git checkout main` restores
-the current working version immediately.
+The last known-working commit before this fix is tagged `pre-check-ocr-fix`. See
+"If something breaks mid-count" below for how to fall back to it.
 
 ---
 
-## 1. Confirm the template columns — 2 min — BLOCKING
+## 1. Confirm the template columns — 2 min — already checked, re-verify on paper
 
-Open `E:\헌금보고서\헌금보고서_양식.xlsx` and find the column holding the
-denomination labels (1, 2, 5, 10, 20, 50, 100).
+This was checked directly against the live file on the church PC before the merge
+(openpyxl read of `E:\헌금보고서\헌금보고서_양식.xlsx`, cell by cell): denomination
+labels are in **column B**, so the shipped offsets are correct, and the check block
+header row (`COUNT`/`CHECK #`/`발행자`/`금액`) is at row 3, columns I/J/K/L, data
+from row 4. That is why this was merged to `main` ahead of the rest of this runbook.
+
+Worth a quick eyes-on confirmation anyway before a real count — open
+`E:\헌금보고서\헌금보고서_양식.xlsx` and check the same things:
 
 | Labels in | Meaning | Action |
 |---|---|---|
-| Column B | Shipped offsets are correct | Nothing to change; continue |
-| Column A | Every write is one column too far right | **Stop.** Cash figures have been landing in the wrong columns and the Sub Total formulas have been summing the wrong cells |
+| Column B | Shipped offsets are correct (expected) | Nothing to change; continue |
+| Column A | Every write is one column too far right | **Stop**, revert to `pre-check-ocr-fix` (see "If something breaks mid-count"), and report back — the file must have changed since it was checked |
 
-While the file is open, also record:
-
-- the row the check block starts on;
-- the columns used for 순번 / CHECK # / 발행자 / 금액;
-- the row and column where the **수표정리** summary block begins (needed in step 5).
-
-This is the one thing that could not be verified remotely, and it changes the
-meaning of every number in steps 2 and 3.
+While the file is open, also record the row and column where the **수표정리**
+summary block begins (needed in step 5) — that part was not double-checked against
+the live formulas there in the same pass.
 
 ---
 
@@ -141,17 +145,24 @@ Also record:
 
 ## 5. 수표정리 summary and printing — 10 min
 
-Using the summary block position recorded in step 1 (example: row 20, column I):
+**Do not pass `--summary-anchor` against this template.** Direct inspection of
+`E:\헌금보고서\헌금보고서_양식.xlsx` (rows 19–29) found it already has a working
+수표정리 block: 11 predefined amount rows — $5/10/15/20/25/30/45/50/100/200/600, not
+the $5/10/20/25/50/100 that `check_summary.py`'s `DEFAULT_PREDEFINED_AMOUNTS` assumes
+— that auto-tally via `COUNTIF($L$4:$L$30, ...)` formulas. Those formulas fire on
+their own as soon as check amounts land in column L; `--summary-anchor` would write
+Python-computed static values over them, using the wrong predefined list. Just run:
 
 ```
-python src/check_scan.py ... --summary-anchor 20,9 --print-layout
+python src/check_scan.py --img_dir <scans> --report_file <report.xlsx> --print-layout
 ```
 
-Predefined rows ($5 / $10 / $20 / $25 / $50 / $100) should always appear even at
-zero, with any other amount appended below the $100 row in ascending order.
+then confirm the 수표정리 block on the printed/opened report tallied correctly by
+itself. If `check_summary.py`'s standalone summary is ever wanted for a different
+template, fix `DEFAULT_PREDEFINED_AMOUNTS` (and `write_check_summary`'s column
+mapping — production uses amount/label/count/total = A/B/C/D, not three columns
+starting at one anchor) first; that is a separate follow-up, not part of this round.
 
-- Confirm the predefined list matches the paper form. 5/10/20/25/50/100 is an
-  assumption — correct it if it differs.
 - Print a finished report; top and bottom margins should be about ¼ inch.
 - If it spills to a second page, the row heights need pulling back.
 
@@ -175,12 +186,16 @@ zero, with any other amount appended below the $100 row in ascending order.
 
 The count still has to be finished and correct — that comes first.
 
+`main` already has this fix on it, so `git checkout main` will **not** help. Instead:
+
 ```
-git checkout main
+git checkout pre-check-ocr-fix -- .
 ```
 
-Restores the current working version immediately. Note what happened and which step
-you were on; the branch stays on GitHub.
+Restores every source file to the last known-working version from before this fix
+(tagged `pre-check-ocr-fix`), without switching branches or losing history. Note what
+happened and which step you were on, then run `git checkout main -- .` afterward to
+put the fix back once the count is safely finished on paper.
 
 The report the parish keeps is a financial record. If any number looks wrong, trust
 the paper count over the screen.
@@ -193,22 +208,24 @@ For whoever picks this up after the test. Each open question maps to one place.
 
 | Question from the test | Change here |
 |---|---|
-| Denomination labels in column A or B? | `src/cash_count_ui.py:55-59` (`DATA_START_ROW`, `DATE_CELL`, `TIME_CELL`, `FIRST_OFFERING_COL`, `SECOND_OFFERING_COL`) |
-| Check block row/columns in the template | `src/check_scan.py:45-49` (`CHECK_START_ROW`, `SEQ_COL`, `CHECK_NUM_COL`, `PAYER_COL`, `AMOUNT_COL`) |
+| Denomination labels in column A or B? | ~~`src/cash_count_ui.py:55-59`~~ — **confirmed column B, offsets correct**, see step 1 |
+| Check block row/columns in the template | ~~`src/check_scan.py:45-49`~~ — **confirmed row 3/cols I-L, offsets correct**, see step 1 |
 | Is the 2차 PDF cumulative or standalone? | `src/cash_data.py:102` `subtract_offering()` — if standalone, skip the subtraction and write the frame directly |
 | Which `--order` matched the physical stack? | `src/check_scan.py` `list_check_images()` — make the winner the default |
 | Where do the `$` box and written line actually sit? | `src/check_rois.json` (defaults in `src/check_fields.py:27`) |
-| Correct predefined check amounts | `src/check_summary.py:14` `DEFAULT_PREDEFINED_AMOUNTS` |
+| Correct predefined check amounts | `src/check_summary.py:14` `DEFAULT_PREDEFINED_AMOUNTS` — **already known to be wrong**: production is $5/10/15/20/25/30/45/50/100/200/600, not $5/10/20/25/50/100; not yet fixed, and `--summary-anchor` should not be used until it is (see step 5) |
 | Did a different OCR backend win? | `src/ocr/backends.py` — `LegacyBackend:24`, `PaddleOCRBackend:101`, `QwenVLBackend:160`; change the default in `get_backend():221` and in `check_scan.py`'s `--backend` |
 | Report spilled to a second page | `src/report_layout.py` `apply_print_layout()` — lower `max_row_height` or `fill_ratio` |
 | Blind clicks misfiring on app launch | `src/cash_count_ui.py:47` `APP_LAUNCH_DELAY` (currently 0.5s; the older CLI used 3s) |
 
 ## What is deliberately unresolved
 
-- **Column offsets were left exactly as the original code had them.** The repo's
-  `Cash_Table_Formatter.xlsx` disagrees with them by one column, but the production
-  template was never available to confirm against. Do not change them on the basis
-  of the repo copy alone.
+- **Column offsets were confirmed against the production template** (2026-08-22,
+  direct openpyxl read of `E:\헌금보고서\헌금보고서_양식.xlsx`) and are correct as
+  shipped — this is why the fix went to `main` ahead of the rest of this runbook.
+  The repo's `Cash_Table_Formatter.xlsx` is a stale, different copy (labels one
+  column left, and missing the 수표정리 block entirely) — do not use it as a
+  reference for anything beyond row 14.
 - **`src/check_rois.json` holds standard-check-layout estimates, not measurements.**
   Until step 4 runs, treat the courtesy-box amount read as unproven.
 - **`src/cash_count.py` is superseded** by `cash_count_ui.py` + `cash_data.py`. It

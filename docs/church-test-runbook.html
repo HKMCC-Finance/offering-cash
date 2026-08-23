@@ -275,7 +275,7 @@
     <h1>Church runbook: verifying the cash and check fixes</h1>
     <p class="standfirst">Everything that could be tested away from the hardware already passes. These six steps cover what only the counting machine, the scanner and the printer can answer. Work through them in order — step&nbsp;1 decides whether the rest is even meaningful.</p>
     <div class="meta">
-      <span><b>Branch</b> fix/check-ocr-and-report-layout</span>
+      <span><b>Branch</b> main (merged 2026-08-22)</span>
       <span><b>Est.</b> 60–90 min</span>
       <span><b>Needs</b> BC-40 · scanner · printer</span>
     </div>
@@ -287,16 +287,16 @@
       <h2>Get the code</h2>
       <span class="step-time">2 min</span>
     </div>
-    <p>On the church PC, in the existing repo folder:</p>
+    <p>This fix was merged straight to <code>main</code> on 2026-08-22 (after the column-offset check in step 1 was confirmed against the production template), rather than waiting on these on-site steps — so <code>main</code> is <strong>not</strong> a safe rollback target anymore, it already has the fix. On the church PC, in the existing repo folder:</p>
     <pre>git fetch origin
-git checkout fix/check-ocr-and-report-layout
+git checkout main
 git pull
 
 <span class="c"># confirm nothing is broken before touching the hardware</span>
 python src/selftest.py    <span class="c"># expect: 47 passed, 0 failed</span></pre>
     <div class="note key">
       <span class="note-label">Note</span>
-      <p><code>main</code> is untouched. If anything here goes wrong, <code>git checkout main</code> puts the PC back exactly as it is today.</p>
+      <p>The last known-working commit before this fix is tagged <code>pre-check-ocr-fix</code>. See "If something breaks mid-count" at the end of this page for how to fall back to it.</p>
     </div>
   </section>
 
@@ -306,7 +306,7 @@ python src/selftest.py    <span class="c"># expect: 47 passed, 0 failed</span></
       <h2>Confirm the template columns</h2>
       <span class="step-time">2 min</span>
     </div>
-    <p>Open <code>E:\헌금보고서\헌금보고서_양식.xlsx</code> and look at where the denomination labels (1, 2, 5, 10, 20, 50, 100) sit.</p>
+    <p>This was checked directly against the live file on the church PC before the merge (openpyxl read of <code>E:\헌금보고서\헌금보고서_양식.xlsx</code>, cell by cell): denomination labels are in <strong>column B</strong>, so the shipped offsets are correct, and the check block header row is at row 3, columns I/J/K/L, data from row 4. That is why this was merged to <code>main</code> ahead of the rest of this runbook. Worth a quick eyes-on confirmation anyway before a real count — open <code>E:\헌금보고서\헌금보고서_양식.xlsx</code> and check the same thing.</p>
     <div class="scroll">
       <table>
         <thead>
@@ -315,22 +315,18 @@ python src/selftest.py    <span class="c"># expect: 47 passed, 0 failed</span></
         <tbody>
           <tr>
             <td class="file">Column B</td>
-            <td>The shipped offsets are correct.</td>
+            <td>The shipped offsets are correct (expected).</td>
             <td class="why">Nothing to change. Continue to step 2.</td>
           </tr>
           <tr>
             <td class="file">Column A</td>
             <td>Every write is one column too far right.</td>
-            <td class="why"><strong>Stop and tell me.</strong> Cash numbers are landing in the wrong columns and the Sub&nbsp;Total formulas have been summing the wrong cells.</td>
+            <td class="why"><strong>Stop</strong>, revert to <code>pre-check-ocr-fix</code>, and tell me — the file must have changed since it was checked.</td>
           </tr>
         </tbody>
       </table>
     </div>
-    <p>While the file is open, also note: the row the check block starts on, the columns used for 순번 / CHECK# / 발행자 / 금액, and the row and column where the <strong>수표정리</strong> summary block begins. You'll need that last one in step 5.</p>
-    <div class="note stop">
-      <span class="note-label">Blocking</span>
-      <p>This is the one thing I could not verify remotely, and it changes the meaning of every number in steps 2 and 3. Do it first.</p>
-    </div>
+    <p>While the file is open, also note the row and column where the <strong>수표정리</strong> summary block begins (needed in step 5) — that part was not double-checked against the live formulas there in the same pass.</p>
   </section>
 
   <section class="step">
@@ -408,11 +404,14 @@ DEP_207_Front.tif,Mary Kim,20.00</pre>
       <h2>수표정리 summary and printing</h2>
       <span class="step-time">10 min</span>
     </div>
-    <p>Using the summary block position you noted in step 1 — say it starts at row 20, column I:</p>
-    <pre>python src/check_scan.py ... --summary-anchor 20,9 --print-layout</pre>
-    <p>Predefined rows ($5 / $10 / $20 / $25 / $50 / $100) should always appear even at zero, with any other amount appended below the $100 row in ascending order.</p>
+    <div class="note stop">
+      <span class="note-label">Do not use --summary-anchor</span>
+      <p>Direct inspection of <code>E:\헌금보고서\헌금보고서_양식.xlsx</code> (rows 19–29) found it already has a working 수표정리 block: 11 predefined amount rows — $5/10/15/20/25/30/45/50/100/200/600, not the $5/10/20/25/50/100 that <code>check_summary.py</code> assumes — that auto-tally via <code>COUNTIF($L$4:$L$30, ...)</code> formulas. Those fire on their own once check amounts land in column L. <code>--summary-anchor</code> would overwrite them with Python-computed values using the wrong list.</p>
+    </div>
+    <p>Just run:</p>
+    <pre>python src/check_scan.py --img_dir &lt;scans&gt; --report_file &lt;report.xlsx&gt; --print-layout</pre>
     <ul class="checks">
-      <li><label class="check"><input type="checkbox"><span>Confirm the predefined amount list matches the paper form. I guessed 5/10/20/25/50/100 — correct me if it differs.</span></label></li>
+      <li><label class="check"><input type="checkbox"><span>Confirm the 수표정리 block on the printed/opened report tallied correctly by itself.</span></label></li>
       <li><label class="check"><input type="checkbox"><span>Print a finished report. Top and bottom margins should now be about ¼ inch.</span></label></li>
       <li><label class="check"><input type="checkbox"><span>If it spills onto a second page, tell me — the row heights need pulling back.</span></label></li>
     </ul>
@@ -449,8 +448,9 @@ DEP_207_Front.tif,Mary Kim,20.00</pre>
       <span class="step-time">—</span>
     </div>
     <p>The count still has to be finished and correct — that comes first.</p>
-    <pre>git checkout main</pre>
-    <p>That restores today's working version immediately. Then note what happened and which step you were on; nothing is lost, and the branch stays on GitHub for us to fix.</p>
+    <p><code>main</code> already has this fix on it, so <code>git checkout main</code> will <strong>not</strong> help. Instead:</p>
+    <pre>git checkout pre-check-ocr-fix -- .</pre>
+    <p>That restores every source file to the last known-working version from before this fix, without switching branches or losing history. Note what happened and which step you were on, then run <code>git checkout main -- .</code> afterward to put the fix back once the count is safely finished on paper.</p>
     <div class="note stop">
       <span class="note-label">Reminder</span>
       <p>The report the parish keeps is a financial record. If any number looks wrong, trust the paper count over the screen and tell me what diverged.</p>
@@ -458,8 +458,8 @@ DEP_207_Front.tif,Mary Kim,20.00</pre>
   </section>
 
   <footer>
-    Repo: HKMCC-Finance/offering-cash · branch fix/check-ocr-and-report-layout<br>
-    Column offsets deliberately unchanged pending step 1 · 47 machine-independent checks passing
+    Repo: HKMCC-Finance/offering-cash · merged to main 2026-08-22 · rollback tag pre-check-ocr-fix<br>
+    Column offsets confirmed correct against the production template · 47 machine-independent checks passing
   </footer>
 
 </div>

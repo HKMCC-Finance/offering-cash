@@ -128,9 +128,17 @@ models, and prints the list of things that still require a real test on site.
 
 - The column offsets in `cash_count_ui.py` (`FIRST_OFFERING_COL`,
   `SECOND_OFFERING_COL`, `DATE_CELL`, `TIME_CELL`) and the check block columns
-  in `check_scan.py` have **not** been verified against the production template
-  `E:\헌금보고서\헌금보고서_양식.xlsx`. The copy in this repo
-  (`Cash_Table_Formatter.xlsx`) puts the denomination labels in column A, which
-  would make those offsets one column too far right. Confirm before changing.
+  in `check_scan.py` **have been confirmed correct** against the production
+  template `E:\헌금보고서\헌금보고서_양식.xlsx` (2026-08-22, direct openpyxl
+  read). The copy in this repo (`Cash_Table_Formatter.xlsx`) is a stale,
+  different file — it puts the denomination labels in column A and is missing
+  the 수표정리 summary block entirely — do not use it as a reference beyond
+  row 14.
 - `src/check_rois.json` holds standard-layout estimates, not measured values.
-  Retune against real scans.
+  Retune against real scans (see `docs/CHURCH_TEST_RUNBOOK.md`).
+- `check_summary.py`'s `DEFAULT_PREDEFINED_AMOUNTS` ($5/10/20/25/50/100) do not
+  match the production template's 수표정리 block, which has 11 predefined rows
+  ($5/10/15/20/25/30/45/50/100/200/600) that already auto-tally via `COUNTIF`
+  formulas once check amounts land in column L. Do not pass `--summary-anchor`
+  against the production template until this is fixed — it would overwrite
+  those working formulas with values computed from the wrong list.
