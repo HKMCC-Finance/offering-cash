@@ -427,10 +427,26 @@ DEP_207_Front.tif,Mary Kim,20.00</pre>
     </div>
     <p>Just run:</p>
     <pre>python src/check_scan.py --img_dir &lt;scans&gt; --report_file &lt;report.xlsx&gt; --print-layout</pre>
+    <p>Measured on the 2026-08-22 17시 report before the volunteers' test:</p>
+    <div class="scroll">
+      <table>
+        <thead><tr><th></th><th>Before</th><th>After</th></tr></thead>
+        <tbody>
+          <tr><td>Margins</td><td>1.00" all round</td><td>0.25" all round</td></tr>
+          <tr><td>Print scale</td><td>68%</td><td><strong>83%</strong></td></tr>
+          <tr><td>Pages</td><td>2</td><td><strong>2</strong> (unchanged)</td></tr>
+          <tr><td>Height on paper</td><td>7.15"</td><td>8.73"</td></tr>
+          <tr><td>Vertical fill</td><td>79%</td><td>83%</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>The two-page split is deliberate: the template carries a manual column break after column H, so page 1 is the cash/check summary (B–H) and page 2 is the check listing (I–L). Row heights are left alone — at 0.25" margins the rows already fill the height, so the gain comes from the margins and from replacing the fixed 68% scale.</p>
     <ul class="checks">
       <li><label class="check"><input type="checkbox"><span>Confirm the 수표정리 block on the printed/opened report tallied correctly by itself.</span></label></li>
-      <li><label class="check"><input type="checkbox"><span>Print a finished report. Top and bottom margins should now be about ¼ inch.</span></label></li>
-      <li><label class="check"><input type="checkbox"><span>If it spills onto a second page, tell me — the row heights need pulling back.</span></label></li>
+      <li><label class="check"><input type="checkbox"><span><strong>Two pages</strong> — not one, not three. Three means a page is spilling sideways; one means the column break was overridden.</span></label></li>
+      <li><label class="check"><input type="checkbox"><span>Page 1 ends cleanly after column H (금액 of the cash block); page 2 is the check listing.</span></label></li>
+      <li><label class="check"><input type="checkbox"><span>Nothing clipped at the outer edges — 0.25" is tighter than some printers allow. If it clips, raise the margin, not the scale.</span></label></li>
+      <li><label class="check"><input type="checkbox"><span>No extra column of numbers down the left of page 1 (that would be column A, the duplicate 수표정리 amounts).</span></label></li>
     </ul>
   </section>
 

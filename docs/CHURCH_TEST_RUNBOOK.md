@@ -211,8 +211,33 @@ template, fix `DEFAULT_PREDEFINED_AMOUNTS` (and `write_check_summary`'s column
 mapping — production uses amount/label/count/total = A/B/C/D, not three columns
 starting at one anchor) first; that is a separate follow-up, not part of this round.
 
-- Print a finished report; top and bottom margins should be about ¼ inch.
-- If it spills to a second page, the row heights need pulling back.
+### Printing — what to expect
+
+Measured on the 2026-08-22 17시 report before the volunteers' test:
+
+| | Before | After |
+|---|---|---|
+| Margins | 1.00" all round | 0.25" all round |
+| Print scale | 68% | **83%** |
+| Pages | 2 | **2** (unchanged) |
+| Height on paper | 7.15" | 8.73" |
+| Vertical fill | 79% | 83% |
+
+The two-page split is deliberate and must stay: the template carries a manual
+column break after column H, so **page 1 is the cash/check summary (B–H) and
+page 2 is the check listing (I–L)**. Row heights are left alone — at 0.25"
+margins the rows already fill the height, so the gain comes from the margins
+and from replacing the template's fixed 68% scale.
+
+Check on real paper:
+
+- **Two pages, not one and not three.** Three means a page is spilling
+  sideways; one means the column break was overridden.
+- Page 1 ends cleanly after column H (금액 column of the cash block).
+- Nothing clipped at the outer edges — 0.25" is tighter than some printers
+  allow. If it clips, that is the margin to raise, not the scale.
+- No extra column of numbers down the left of page 1 (that would be column A,
+  the duplicate 수표정리 amounts).
 
 ---
 
@@ -234,7 +259,17 @@ starting at one anchor) first; that is a separate follow-up, not part of this ro
 
 The count still has to be finished and correct — that comes first.
 
-`main` already has this fix on it, so `git checkout main` will **not** help. Instead:
+**If you are running the desktop shortcut (the usual case)**, the code is inside
+the packaged exe, so git will not change what you are running. Swap the build back:
+
+1. rename `E:\CashCounting\dist\cash_count_ui` to `cash_count_ui_new`
+2. rename `E:\CashCounting\dist\cash_count_ui_prefix_backup` to `cash_count_ui`
+
+The shortcut points at that folder, so it picks up the restored build with no
+shortcut edit. Reverse the two renames to go back to the new build.
+
+**If you are running from source** (`python src/cash_count_ui.py`), `main` already
+has this fix on it, so `git checkout main` will **not** help. Instead:
 
 ```
 git checkout pre-check-ocr-fix -- .
