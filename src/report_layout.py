@@ -45,7 +45,11 @@ def apply_print_layout(worksheet, *, paper_height_in: float = 11.0,
     worksheet.print_options.horizontalCentered = True
     worksheet.print_options.verticalCentered = False
 
-    if set_print_area:
+    if set_print_area and not worksheet.print_area:
+        # Only set a print area when the sheet does not already define one.
+        # The production template prints $B$1:$L$32 deliberately - column A
+        # holds a duplicate of the 수표정리 amounts in column B, and widening
+        # the range to A would put that second column of numbers on the paper.
         # Build the reference from the column index directly: cell() returns a
         # MergedCell for merged ranges, which has no column_letter.
         last_col = get_column_letter(worksheet.max_column)

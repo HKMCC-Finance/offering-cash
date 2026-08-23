@@ -128,6 +128,23 @@ def test_print_layout():
     again = sum((sheet.row_dimensions[r].height or 15.0) for r in range(1, sheet.max_row + 1))
     check("idempotent on re-run", abs(again - after) < 0.5)
 
+    # The production template prints $B$1:$L$32 on purpose: column A holds a
+    # duplicate of the 수표정리 amounts in column B. Widening the range to A
+    # would print that second column of numbers.
+    workbook2 = load_workbook(TEMPLATE)
+    sheet2 = workbook2.active
+    sheet2.print_area = "B1:L32"
+    apply_print_layout(sheet2)
+    check("existing print area preserved", sheet2.print_area == "'Sheet1'!$B$1:$L$32",
+          f"got {sheet2.print_area}")
+
+    workbook3 = load_workbook(TEMPLATE)
+    sheet3 = workbook3.active
+    sheet3.print_area = None
+    apply_print_layout(sheet3)
+    check("print area still set when absent", bool(sheet3.print_area),
+          f"got {sheet3.print_area}")
+
 
 def test_cash_pipeline():
     print("\n[현금] parsing, alignment and 2차 subtraction (#1)")
