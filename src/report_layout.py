@@ -5,11 +5,61 @@ wide band of white space underneath. Growing the row heights to fill the
 printable area removes that band without changing any content.
 """
 
+import re
+
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.properties import PageSetupProperties
 
 POINTS_PER_INCH = 72.0
 DEFAULT_ROW_HEIGHT = 15.0  # Excel's default, used when a row has no explicit height
+DEFAULT_COLUMN_WIDTH = 8.43
+PAPER_WIDTH_IN = 8.5  # US Letter, portrait
+
+
+def _column_width_in(worksheet, column: int) -> float:
+    """Approximate a column's printed width in inches.
+
+    Excel stores width in characters of the default font; the usual pixel
+    conversion is round(width * 7) + 5 at 96 DPI for Calibri 11.
+    """
+    width = worksheet.column_dimensions[get_column_letter(column)].width
+    if not width:
+        width = DEFAULT_COLUMN_WIDTH
+    return (round(width * 7) + 5) / 96.0
+
+
+def _print_area_columns(worksheet):
+    """(first_col, last_col) of the print area, or the sheet's used range."""
+    area = worksheet.print_area
+    if area:
+        reference = area[0] if isinstance(area, (list, tuple)) else area
+        match = re.search(r"\$?([A-Z]{1,3})\$?\d+:\$?([A-Z]{1,3})\$?\d+", str(reference))
+        if match:
+            from openpyxl.utils import column_index_from_string
+            return (column_index_from_string(match.group(1)),
+                    column_index_from_string(match.group(2)))
+    return worksheet.min_column or 1, worksheet.max_column or 1
+
+
+def _column_page_groups(worksheet):
+    """Split the printed columns at manual column breaks.
+
+    The offering template carries a deliberate break after column H: the cash
+    and check summary print on page 1, the check listing on page 2. Forcing
+    fitToWidth=1 overrides that break and squashes both onto one sheet, which
+    is why width is fitted by scale here instead.
+    """
+    first_col, last_col = _print_area_columns(worksheet)
+    breaks = []
+    if worksheet.col_breaks is not None and worksheet.col_breaks.brk:
+        breaks = sorted(b.id for b in worksheet.col_breaks.brk
+                        if first_col <= b.id < last_col)
+    groups, start = [], first_col
+    for boundary in breaks:
+        groups.append((start, boundary))
+        start = boundary + 1
+    groups.append((start, last_col))
+    return groups
 
 
 def apply_print_layout(worksheet, *, paper_height_in: float = 11.0,
@@ -38,12 +88,23 @@ def apply_print_layout(worksheet, *, paper_height_in: float = 11.0,
     worksheet.page_margins.footer = footer_in
 
     worksheet.page_setup.orientation = "portrait"
-    worksheet.page_setup.fitToWidth = 1
-    worksheet.page_setup.fitToHeight = 1
-    # fitToWidth/fitToHeight are ignored unless this property is set too.
-    worksheet.sheet_properties.pageSetUpPr = PageSetupProperties(fitToPage=True)
     worksheet.print_options.horizontalCentered = True
     worksheet.print_options.verticalCentered = False
+
+    groups = _column_page_groups(worksheet)
+    has_manual_breaks = len(groups) > 1
+    if has_manual_breaks:
+        # Respect the manual column breaks: scale explicitly so the widest
+        # page fits across, and let the width run to as many pages as the
+        # breaks call for. fitToPage would collapse them into one sheet.
+        worksheet.sheet_properties.pageSetUpPr = PageSetupProperties(fitToPage=False)
+        worksheet.page_setup.fitToWidth = 0
+        worksheet.page_setup.fitToHeight = 0
+    else:
+        worksheet.page_setup.fitToWidth = 1
+        worksheet.page_setup.fitToHeight = 1
+        # fitToWidth/fitToHeight are ignored unless this property is set too.
+        worksheet.sheet_properties.pageSetUpPr = PageSetupProperties(fitToPage=True)
 
     if set_print_area and not worksheet.print_area:
         # Only set a print area when the sheet does not already define one.
@@ -67,18 +128,43 @@ def apply_print_layout(worksheet, *, paper_height_in: float = 11.0,
     if current_total <= 0:
         return {"rows_scaled": 0, "scale": 1.0, "available_points": available_points}
 
+    print_scale = None
+    if has_manual_breaks:
+        # Pick the largest scale at which the widest page still fits across the
+        # paper and the whole block still fits down it. Excel applies one scale
+        # to both axes, so width is usually the binding constraint - which is
+        # why the template shipped at 68%: it was sized for width, and the
+        # vertical white space was the side effect.
+        usable_width_in = PAPER_WIDTH_IN - left_margin_in - right_margin_in
+        widest_in = max(
+            sum(_column_width_in(worksheet, c) for c in range(start, end + 1))
+            for start, end in groups
+        )
+        width_limit = usable_width_in / widest_in if widest_in > 0 else 1.0
+        height_limit = usable_in / (current_total / POINTS_PER_INCH)
+        # 2% back off so a printer's own unprintable edge does not tip a page over.
+        print_scale = min(width_limit, height_limit, 1.0) * 0.98
+        worksheet.page_setup.scale = max(10, min(400, int(print_scale * 100)))
+
     scale = available_points / current_total
     if scale <= 1.0:
-        # Already fills the page (or overflows) - fitToHeight handles the rest.
-        return {"rows_scaled": 0, "scale": scale, "available_points": available_points}
+        result = {"rows_scaled": 0, "scale": scale, "available_points": available_points}
+        if print_scale is not None:
+            result["print_scale"] = worksheet.page_setup.scale
+            result["pages_wide"] = len(groups)
+        return result
 
     for row_number, height in heights.items():
         scaled = max(min_row_height, min(max_row_height, height * scale))
         worksheet.row_dimensions[row_number].height = round(scaled, 2)
 
-    return {
+    result = {
         "rows_scaled": len(heights),
         "scale": round(scale, 3),
         "available_points": round(available_points, 1),
         "new_total_points": round(sum(worksheet.row_dimensions[r].height for r in heights), 1),
     }
+    if print_scale is not None:
+        result["print_scale"] = worksheet.page_setup.scale
+        result["pages_wide"] = len(groups)
+    return result

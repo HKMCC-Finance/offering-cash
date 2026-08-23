@@ -17,6 +17,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import pandas as pd
 from openpyxl import load_workbook
+from openpyxl.worksheet.pagebreak import Break
 
 from cash_data import (align_to_denominations, clean_denomination_frame,
                        load_offering_snapshot, save_offering_snapshot,
@@ -144,6 +145,27 @@ def test_print_layout():
     apply_print_layout(sheet3)
     check("print area still set when absent", bool(sheet3.print_area),
           f"got {sheet3.print_area}")
+
+    # The production template breaks after column H on purpose: the cash and
+    # check summary print on page 1, the check listing on page 2. fitToWidth=1
+    # overrides a manual break and squashes both onto one sheet.
+    workbook4 = load_workbook(TEMPLATE)
+    sheet4 = workbook4.active
+    sheet4.print_area = "B1:L32"
+    sheet4.col_breaks.append(Break(id=8))
+    info4 = apply_print_layout(sheet4)
+    breaks4 = [b.id for b in sheet4.col_breaks.brk] if sheet4.col_breaks.brk else []
+    check("manual column break preserved", breaks4 == [8], f"got {breaks4}")
+    check("width not collapsed to one page",
+          sheet4.sheet_properties.pageSetUpPr.fitToPage is False
+          and sheet4.page_setup.fitToWidth == 0,
+          f"fitToPage={sheet4.sheet_properties.pageSetUpPr.fitToPage} "
+          f"fitToWidth={sheet4.page_setup.fitToWidth}")
+    check("explicit print scale set for a two-page sheet",
+          info4.get("pages_wide") == 2 and 10 <= info4.get("print_scale", 0) <= 100,
+          f"got {info4}")
+    check("scale beats the template's 68%", info4.get("print_scale", 0) > 68,
+          f"got {info4.get('print_scale')}")
 
 
 def test_cash_pipeline():
