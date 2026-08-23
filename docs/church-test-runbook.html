@@ -376,9 +376,18 @@ python src/selftest.py    <span class="c"># expect: 47 passed, 0 failed</span></
     <pre>python src/check_scan.py ... --order filename
 python src/check_scan.py ... --order checknum</pre>
     <ul class="checks">
-      <li><label class="check"><input type="checkbox"><span>Note the scanner's actual filename format (e.g. <code>DEP_1043_Front.tif</code>) — I need a real example.</span></label></li>
-      <li><label class="check"><input type="checkbox"><span>Confirm rows match the handwritten feed order.</span></label></li>
+      <li><label class="check"><input type="checkbox"><span>Confirm the report row order against your handwritten list — only that proves the <em>direction</em> is right.</span></label></li>
+      <li><label class="check"><input type="checkbox"><span>Before running, confirm the scan folder holds only this week's batch (see the warning below).</span></label></li>
     </ul>
+      <div class="note key">
+        <span class="note-label">Partly answered already (2026-08-22)</span>
+        <p>Production scans live beside each report, in <code>E:\헌금보고서\&lt;date&gt;\헌금보고서_&lt;date&gt;_&lt;mass&gt;미사_checks\</code>. The real filename format is <code>&lt;account&gt;_&lt;check#&gt;.Front.tif</code> (e.g. <code>1010143133072_0308.Front.tif</code>) — note the <strong>dot</strong> before <code>Front</code>, not the underscore the examples assume. <code>parse_check_number()</code> handles it; all 17 files in the sample folder parsed correctly.</p>
+        <p><strong>File times are sequential within a scanning session</strong> (6–12 s apart, consistent with sheets going through the feeder), so <code>--order scan</code> — the default — is well founded. And <strong>scan order genuinely differs from filename order</strong>, confirming the original complaint: on the sample folder the two disagreed almost completely.</p>
+      </div>
+      <div class="note stop">
+        <span class="note-label">A scan folder can hold more than one Sunday</span>
+        <p><code>헌금보고서_08-09-2026_11시미사_checks</code> holds 17 scans: 8 written 2026-08-09 12:44–12:45 and 9 written <strong>2026-08-16</strong> 12:44–12:45 — a whole second week scanned into the previous week's folder. Every other folder checked held exactly one date, so this is a workflow slip rather than the norm, but <code>check_scan.py</code> will happily write all 17 rows into the one report. Check the folder's file dates before running it.</p>
+      </div>
   </section>
 
   <section class="step">

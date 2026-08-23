@@ -121,7 +121,34 @@ python src/check_scan.py ... --order filename
 python src/check_scan.py ... --order checknum
 ```
 
-Also record the scanner's actual filename format (e.g. `DEP_1043_Front.tif`).
+Also record the scanner's actual filename format.
+
+> **Partly answered already, from the scans already on this PC (2026-08-22).**
+> Production scans live beside each report, in
+> `E:\헌금보고서\<date>\헌금보고서_<date>_<mass>미사_checks\`.
+> The real filename format is `<account>_<check#>.Front.tif`
+> (e.g. `1010143133072_0308.Front.tif`) — note the **dot** before `Front`,
+> not the underscore the examples assume. `parse_check_number()` handles it:
+> all 17 files in the sample folder parsed correctly.
+>
+> - **File times are sequential within a scanning session** — 6–12 s apart,
+>   consistent with sheets going through the feeder — so `--order scan`
+>   (the default) is well founded.
+> - **Scan order genuinely differs from filename order**, confirming the
+>   original complaint. On the sample folder the two orderings disagreed
+>   almost completely.
+>
+> Still worth confirming against a handwritten list, since only that proves
+> the *direction* is right.
+
+> **Watch out — a scan folder can hold more than one Sunday.**
+> `헌금보고서_08-09-2026_11시미사_checks` contains 17 scans: 8 written
+> 2026-08-09 12:44–12:45 and 9 written **2026-08-16** 12:44–12:45. A whole
+> second week's checks were scanned into the previous week's folder. Every
+> other folder checked held exactly one date, so this is a workflow slip
+> rather than the norm — but `check_scan.py` will happily write all 17 rows
+> into the one report. Before running it, confirm the folder holds only the
+> current batch (`dir` sorted by date is enough).
 
 ---
 
