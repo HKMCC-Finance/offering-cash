@@ -1,0 +1,484 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Offering Count — On-Site Test Runbook</title>
+<style>
+  :root {
+    --paper:      #F4F6F1;
+    --surface:    #FFFFFF;
+    --surface-2:  #EDF0EA;
+    --ink:        #14181A;
+    --ink-soft:   #5A6560;
+    --ink-faint:  #8A948C;
+    --rule:       #CBD5C8;
+    --rule-soft:  #DFE5DC;
+    --accent:     #1F5D4C;
+    --accent-bg:  #E4EDE7;
+    --flag:       #A8601A;
+    --flag-bg:    #F6EADC;
+    --stop:       #9B2C2C;
+    --stop-bg:    #F7E5E3;
+
+    --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+
+    --step: clamp(1.05rem, 0.95rem + 0.5vw, 1.3rem);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper:      #131614;
+      --surface:    #1B201C;
+      --surface-2:  #232924;
+      --ink:        #E8EDE7;
+      --ink-soft:   #9AA79E;
+      --ink-faint:  #6E7A72;
+      --rule:       #2E3630;
+      --rule-soft:  #262D28;
+      --accent:     #6FBFA3;
+      --accent-bg:  #1B2A25;
+      --flag:       #E0A860;
+      --flag-bg:    #2C2418;
+      --stop:       #E08585;
+      --stop-bg:    #2E1D1C;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --paper:      #131614;
+    --surface:    #1B201C;
+    --surface-2:  #232924;
+    --ink:        #E8EDE7;
+    --ink-soft:   #9AA79E;
+    --ink-faint:  #6E7A72;
+    --rule:       #2E3630;
+    --rule-soft:  #262D28;
+    --accent:     #6FBFA3;
+    --accent-bg:  #1B2A25;
+    --flag:       #E0A860;
+    --flag-bg:    #2C2418;
+    --stop:       #E08585;
+    --stop-bg:    #2E1D1C;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 16px;
+    line-height: 1.6;
+    margin: 0;
+    padding: clamp(1.25rem, 4vw, 3.5rem) clamp(1rem, 4vw, 2rem) 5rem;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap { max-width: 46rem; margin: 0 auto; display: flex; flex-direction: column; gap: 2.75rem; }
+
+  /* ---- masthead ---- */
+  .masthead { display: flex; flex-direction: column; gap: 0.75rem; }
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--accent);
+  }
+  h1 {
+    font-family: var(--mono);
+    font-size: clamp(1.5rem, 1.15rem + 1.7vw, 2.1rem);
+    font-weight: 600;
+    line-height: 1.2;
+    letter-spacing: -0.01em;
+    text-wrap: balance;
+    margin: 0;
+  }
+  .standfirst { color: var(--ink-soft); margin: 0; max-width: 40rem; }
+  .meta {
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    color: var(--ink-faint);
+    border-top: 1px solid var(--rule);
+    padding-top: 0.75rem;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem 1.5rem;
+  }
+  .meta b { font-weight: 600; color: var(--ink-soft); }
+
+  /* ---- steps ---- */
+  .step { display: flex; flex-direction: column; gap: 1rem; }
+  .step-head { display: flex; align-items: baseline; gap: 0.85rem; border-bottom: 2px solid var(--ink); padding-bottom: 0.5rem; }
+  .step-num {
+    font-family: var(--mono);
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--surface);
+    background: var(--ink);
+    padding: 0.16rem 0.45rem;
+    letter-spacing: 0.04em;
+    flex: none;
+  }
+  .step-head h2 {
+    font-family: var(--mono);
+    font-size: var(--step);
+    font-weight: 600;
+    margin: 0;
+    line-height: 1.3;
+    text-wrap: balance;
+  }
+  .step-time {
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    color: var(--ink-faint);
+    margin-left: auto;
+    white-space: nowrap;
+    flex: none;
+  }
+  .step > p { margin: 0; }
+  .step p + p { margin-top: -0.35rem; }
+
+  /* ---- code ---- */
+  pre {
+    font-family: var(--mono);
+    font-size: 0.82rem;
+    line-height: 1.65;
+    background: var(--surface);
+    color: var(--ink);
+    border: 1px solid var(--rule);
+    border-left: 3px solid var(--accent);
+    padding: 0.9rem 1rem;
+    margin: 0;
+    overflow-x: auto;
+  }
+  pre .c { color: var(--ink-faint); }
+  code {
+    font-family: var(--mono);
+    font-size: 0.86em;
+    background: var(--surface-2);
+    padding: 0.1em 0.34em;
+    border-radius: 2px;
+  }
+
+  /* ---- checklist ---- */
+  ul.checks { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0; }
+  ul.checks li { border-bottom: 1px solid var(--rule-soft); }
+  ul.checks li:first-child { border-top: 1px solid var(--rule-soft); }
+  label.check {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.7rem;
+    padding: 0.6rem 0.2rem;
+    cursor: pointer;
+  }
+  label.check input {
+    appearance: none;
+    -webkit-appearance: none;
+    flex: none;
+    width: 1.05rem;
+    height: 1.05rem;
+    margin: 0.22rem 0 0;
+    border: 1.5px solid var(--ink-soft);
+    background: var(--surface);
+    cursor: pointer;
+    display: grid;
+    place-content: center;
+  }
+  label.check input::after {
+    content: "";
+    width: 0.55rem;
+    height: 0.3rem;
+    border-left: 2px solid var(--surface);
+    border-bottom: 2px solid var(--surface);
+    transform: rotate(-45deg) translateY(-1px);
+    opacity: 0;
+  }
+  label.check input:checked { background: var(--accent); border-color: var(--accent); }
+  label.check input:checked::after { opacity: 1; }
+  label.check input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  label.check input:checked ~ span { color: var(--ink-faint); text-decoration: line-through; }
+  label.check span { transition: color 0.12s ease; }
+
+  /* ---- callouts ---- */
+  .note {
+    border: 1px solid var(--rule);
+    border-left: 3px solid var(--flag);
+    background: var(--flag-bg);
+    padding: 0.85rem 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+  }
+  .note.stop { border-left-color: var(--stop); background: var(--stop-bg); }
+  .note.key  { border-left-color: var(--accent); background: var(--accent-bg); }
+  .note-label {
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--flag);
+    font-weight: 600;
+  }
+  .note.stop .note-label { color: var(--stop); }
+  .note.key  .note-label { color: var(--accent); }
+  .note p { margin: 0; font-size: 0.94rem; }
+
+  /* ---- table ---- */
+  .scroll { overflow-x: auto; border: 1px solid var(--rule); background: var(--surface); }
+  table { border-collapse: collapse; width: 100%; font-size: 0.88rem; min-width: 30rem; }
+  th, td { text-align: left; padding: 0.55rem 0.85rem; border-bottom: 1px solid var(--rule-soft); vertical-align: top; }
+  thead th {
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--ink-soft);
+    background: var(--surface-2);
+    border-bottom: 1px solid var(--rule);
+    font-weight: 600;
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  td.file { font-family: var(--mono); font-size: 0.82rem; white-space: nowrap; }
+  .why { color: var(--ink-soft); }
+
+  h3 {
+    font-family: var(--mono);
+    font-size: 0.86rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    margin: 0;
+    color: var(--accent);
+  }
+
+  footer {
+    border-top: 1px solid var(--rule);
+    padding-top: 1rem;
+    font-family: var(--mono);
+    font-size: 0.74rem;
+    color: var(--ink-faint);
+    line-height: 1.7;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; animation: none !important; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="masthead">
+    <div class="eyebrow">Offering Count · On-site test</div>
+    <h1>Church runbook: verifying the cash and check fixes</h1>
+    <p class="standfirst">Everything that could be tested away from the hardware already passes. These six steps cover what only the counting machine, the scanner and the printer can answer. Work through them in order — step&nbsp;1 decides whether the rest is even meaningful.</p>
+    <div class="meta">
+      <span><b>Branch</b> fix/check-ocr-and-report-layout</span>
+      <span><b>Est.</b> 60–90 min</span>
+      <span><b>Needs</b> BC-40 · scanner · printer</span>
+    </div>
+  </header>
+
+  <section class="step">
+    <div class="step-head">
+      <span class="step-num">00</span>
+      <h2>Get the code</h2>
+      <span class="step-time">2 min</span>
+    </div>
+    <p>On the church PC, in the existing repo folder:</p>
+    <pre>git fetch origin
+git checkout fix/check-ocr-and-report-layout
+git pull
+
+<span class="c"># confirm nothing is broken before touching the hardware</span>
+python src/selftest.py    <span class="c"># expect: 47 passed, 0 failed</span></pre>
+    <div class="note key">
+      <span class="note-label">Note</span>
+      <p><code>main</code> is untouched. If anything here goes wrong, <code>git checkout main</code> puts the PC back exactly as it is today.</p>
+    </div>
+  </section>
+
+  <section class="step">
+    <div class="step-head">
+      <span class="step-num">01</span>
+      <h2>Confirm the template columns</h2>
+      <span class="step-time">2 min</span>
+    </div>
+    <p>Open <code>E:\헌금보고서\헌금보고서_양식.xlsx</code> and look at where the denomination labels (1, 2, 5, 10, 20, 50, 100) sit.</p>
+    <div class="scroll">
+      <table>
+        <thead>
+          <tr><th>If labels are in…</th><th>Then</th><th>Action</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="file">Column B</td>
+            <td>The shipped offsets are correct.</td>
+            <td class="why">Nothing to change. Continue to step 2.</td>
+          </tr>
+          <tr>
+            <td class="file">Column A</td>
+            <td>Every write is one column too far right.</td>
+            <td class="why"><strong>Stop and tell me.</strong> Cash numbers are landing in the wrong columns and the Sub&nbsp;Total formulas have been summing the wrong cells.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p>While the file is open, also note: the row the check block starts on, the columns used for 순번 / CHECK# / 발행자 / 금액, and the row and column where the <strong>수표정리</strong> summary block begins. You'll need that last one in step 5.</p>
+    <div class="note stop">
+      <span class="note-label">Blocking</span>
+      <p>This is the one thing I could not verify remotely, and it changes the meaning of every number in steps 2 and 3. Do it first.</p>
+    </div>
+  </section>
+
+  <section class="step">
+    <div class="step-head">
+      <span class="step-num">02</span>
+      <h2>Cash — a real two-offering count</h2>
+      <span class="step-time">20 min</span>
+    </div>
+    <p>This is the reported 2차 헌금 problem. The goal is not just "does it work" but <em>capturing both PDFs</em> so the machine's actual behaviour is on record.</p>
+    <ul class="checks">
+      <li><label class="check"><input type="checkbox"><span>Launch <code>python src/cash_count_ui.py</code>, pick a mass time, answer <strong>예</strong> to 2차 헌금.</span></label></li>
+      <li><label class="check"><input type="checkbox"><span>Count a small first offering — a handful of bills across several denominations is enough. Note the counts on paper.</span></label></li>
+      <li><label class="check"><input type="checkbox"><span>Complete 1차. Check the report: are the 1차 columns right?</span></label></li>
+      <li><label class="check"><input type="checkbox"><span><strong>Copy the 1차 PDF out</strong> of the Data folder before counting again — the machine may overwrite it.</span></label></li>
+      <li><label class="check"><input type="checkbox"><span>Count a second, different offering. Note those counts too.</span></label></li>
+      <li><label class="check"><input type="checkbox"><span>Complete 2차. Copy the 2차 PDF out as well.</span></label></li>
+      <li><label class="check"><input type="checkbox"><span>Compare the 2차 columns against what you physically counted.</span></label></li>
+    </ul>
+    <div class="note">
+      <span class="note-label">Watch for</span>
+      <p>Open both PDFs side by side and answer one question: <strong>is the second PDF cumulative (1차 + 2차) or standalone?</strong> The whole subtraction rests on it being cumulative. If it is standalone, the app will now stop with a "기계가 초기화된 것으로 보입니다" warning rather than writing negative quantities — that warning appearing is a <em>correct</em> result, and tells us the fix needs inverting.</p>
+    </div>
+    <p>Then test the restart case, which is my main suspect for the original bug:</p>
+    <ul class="checks">
+      <li><label class="check"><input type="checkbox"><span>Run 1차 again, then <strong>close the app completely</strong> before 2차.</span></label></li>
+      <li><label class="check"><input type="checkbox"><span>Reopen, pick the same mass time, run 2차. The subtraction should still happen — it now reads the snapshot file from disk.</span></label></li>
+    </ul>
+  </section>
+
+  <section class="step">
+    <div class="step-head">
+      <span class="step-num">03</span>
+      <h2>Checks — scan order</h2>
+      <span class="step-time">15 min</span>
+    </div>
+    <p>Before feeding anything into the scanner, <strong>write down the check numbers in the order you feed them</strong>. That handwritten list is the ground truth for this test.</p>
+    <pre>python src/check_scan.py --img_dir &lt;scan folder&gt; --report_file &lt;report.xlsx&gt;</pre>
+    <p>The report rows should match your handwritten list top to bottom. If they don't, the scanner isn't stamping file times in scan order — try the alternatives and tell me which one matches:</p>
+    <pre>python src/check_scan.py ... --order filename
+python src/check_scan.py ... --order checknum</pre>
+    <ul class="checks">
+      <li><label class="check"><input type="checkbox"><span>Note the scanner's actual filename format (e.g. <code>DEP_1043_Front.tif</code>) — I need a real example.</span></label></li>
+      <li><label class="check"><input type="checkbox"><span>Confirm rows match the handwritten feed order.</span></label></li>
+    </ul>
+  </section>
+
+  <section class="step">
+    <div class="step-head">
+      <span class="step-num">04</span>
+      <h2>Checks — accuracy baseline</h2>
+      <span class="step-time">30 min</span>
+    </div>
+    <p>This is the step that turns "roughly 30% wrong" into something measurable. Use a real batch — 100 checks if you have them, 20 if you don't.</p>
+    <p>After the run, open the review sheet written next to the report (<code>&lt;report&gt;_검토.xlsx</code>). It lists every check with the raw OCR text, both amount reads, and why each row was flagged.</p>
+    <h3>Building the truth file</h3>
+    <p>Go down the review sheet and correct the 발행자 and 금액 columns by eye. Then save it as <code>truth.csv</code> with just three columns, renamed:</p>
+    <pre>filename,name,amount
+DEP_1043_Front.tif,John Smith,125.00
+DEP_207_Front.tif,Mary Kim,20.00</pre>
+    <p>That file is the durable asset here — every future model comparison runs against it:</p>
+    <pre>python src/benchmark_ocr.py --img_dir &lt;scans&gt; --truth truth.csv --backend legacy</pre>
+    <div class="note">
+      <span class="note-label">Check first</span>
+      <p>If amount accuracy comes back near zero, the region boxes in <code>src/check_rois.json</code> are cropping the wrong part of your scans. Open one <code>.tif</code>, note roughly where the <code>$</code> box and the written-amount line fall as a fraction of the image, and send me the numbers — those defaults are standard-layout estimates, not measured from your scanner.</p>
+    </div>
+    <ul class="checks">
+      <li><label class="check"><input type="checkbox"><span>Does the GPU check print "Using GPU"? Determines whether a local Qwen3-VL swap is realistic.</span></label></li>
+      <li><label class="check"><input type="checkbox"><span>Is there a donor roster (교적 / 봉헌자 명단) available as a file? Biggest single lever on the name errors.</span></label></li>
+    </ul>
+  </section>
+
+  <section class="step">
+    <div class="step-head">
+      <span class="step-num">05</span>
+      <h2>수표정리 summary and printing</h2>
+      <span class="step-time">10 min</span>
+    </div>
+    <p>Using the summary block position you noted in step 1 — say it starts at row 20, column I:</p>
+    <pre>python src/check_scan.py ... --summary-anchor 20,9 --print-layout</pre>
+    <p>Predefined rows ($5 / $10 / $20 / $25 / $50 / $100) should always appear even at zero, with any other amount appended below the $100 row in ascending order.</p>
+    <ul class="checks">
+      <li><label class="check"><input type="checkbox"><span>Confirm the predefined amount list matches the paper form. I guessed 5/10/20/25/50/100 — correct me if it differs.</span></label></li>
+      <li><label class="check"><input type="checkbox"><span>Print a finished report. Top and bottom margins should now be about ¼ inch.</span></label></li>
+      <li><label class="check"><input type="checkbox"><span>If it spills onto a second page, tell me — the row heights need pulling back.</span></label></li>
+    </ul>
+  </section>
+
+  <section class="step">
+    <div class="step-head">
+      <span class="step-num">06</span>
+      <h2>Bring back</h2>
+      <span class="step-time">—</span>
+    </div>
+    <div class="scroll">
+      <table>
+        <thead>
+          <tr><th>File</th><th>Why it's needed</th></tr>
+        </thead>
+        <tbody>
+          <tr><td class="file">헌금보고서_양식.xlsx</td><td class="why">The production template. Unblocks the column question and the summary anchor for good.</td></tr>
+          <tr><td class="file">1차 PDF + 2차 PDF</td><td class="why">Settles whether the BC-40 reports cumulatively. Everything about 2차 follows from this.</td></tr>
+          <tr><td class="file">20–30 check scans (.tif)</td><td class="why">Lets me retune the region boxes and test model swaps without another trip.</td></tr>
+          <tr><td class="file">truth.csv</td><td class="why">The scoring set. Without it, model changes are guesswork.</td></tr>
+          <tr><td class="file">&lt;report&gt;_검토.xlsx</td><td class="why">Shows which failures are OCR versus parsing versus cropping.</td></tr>
+          <tr><td class="file">cash_count.log</td><td class="why">In <code>E:\헌금보고서\</code>. Records anything that failed silently.</td></tr>
+          <tr><td class="file">A printed report</td><td class="why">Photo is fine — confirms the margins on real paper.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="step">
+    <div class="step-head">
+      <span class="step-num">!</span>
+      <h2>If something breaks mid-count</h2>
+      <span class="step-time">—</span>
+    </div>
+    <p>The count still has to be finished and correct — that comes first.</p>
+    <pre>git checkout main</pre>
+    <p>That restores today's working version immediately. Then note what happened and which step you were on; nothing is lost, and the branch stays on GitHub for us to fix.</p>
+    <div class="note stop">
+      <span class="note-label">Reminder</span>
+      <p>The report the parish keeps is a financial record. If any number looks wrong, trust the paper count over the screen and tell me what diverged.</p>
+    </div>
+  </section>
+
+  <footer>
+    Repo: HKMCC-Finance/offering-cash · branch fix/check-ocr-and-report-layout<br>
+    Column offsets deliberately unchanged pending step 1 · 47 machine-independent checks passing
+  </footer>
+
+</div>
+
+<script>
+  (function () {
+    var boxes = document.querySelectorAll('label.check input[type="checkbox"]');
+    var KEY = 'offering-runbook-v1';
+    var saved = {};
+    try { saved = JSON.parse(localStorage.getItem(KEY) || '{}'); } catch (e) { saved = {}; }
+
+    boxes.forEach(function (box, i) {
+      if (saved[i]) { box.checked = true; }
+      box.addEventListener('change', function () {
+        saved[i] = box.checked;
+        try { localStorage.setItem(KEY, JSON.stringify(saved)); } catch (e) { /* private mode */ }
+      });
+    });
+  })();
+</script>
+</body>
+</html>

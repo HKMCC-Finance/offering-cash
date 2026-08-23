@@ -89,6 +89,14 @@ rate, name CER, and how many actual errors the review flag caught.
 so the report fills the page instead of leaving a wide band of white space.
 Applied automatically by the cash app, and by `--print-layout` for checks.
 
+## On-site testing
+
+Several things can only be verified with the counting machine, the scanner and the
+printer present. `docs/CHURCH_TEST_RUNBOOK.md` is the step-by-step procedure, the
+list of files to collect, and a handoff table mapping each open question to the
+exact constant that answers it. `docs/church-test-runbook.html` is the same
+content as a standalone page with tick-off checkboxes, for offline use.
+
 ## Self-test
 
 ```
