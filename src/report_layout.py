@@ -80,6 +80,16 @@ def apply_print_layout(worksheet, *, paper_height_in: float = 11.0,
     if last_row < first_row:
         return {"rows_scaled": 0, "scale": 1.0, "available_points": 0.0}
 
+    # Capture the incoming page setup before overwriting it: the template's
+    # own scale is the only reliable statement of how wide the content really
+    # is. Column-width-to-inches conversion depends on the workbook's default
+    # font (this template uses Aptos Narrow, not Calibri), so measuring the
+    # columns directly gets the width wrong and spills onto an extra page.
+    previous_scale = worksheet.page_setup.scale or 100
+    previous_usable_width_in = (PAPER_WIDTH_IN
+                                - (worksheet.page_margins.left or 0.0)
+                                - (worksheet.page_margins.right or 0.0))
+
     worksheet.page_margins.top = top_margin_in
     worksheet.page_margins.bottom = bottom_margin_in
     worksheet.page_margins.left = left_margin_in
@@ -130,21 +140,22 @@ def apply_print_layout(worksheet, *, paper_height_in: float = 11.0,
 
     print_scale = None
     if has_manual_breaks:
-        # Pick the largest scale at which the widest page still fits across the
-        # paper and the whole block still fits down it. Excel applies one scale
-        # to both axes, so width is usually the binding constraint - which is
-        # why the template shipped at 68%: it was sized for width, and the
-        # vertical white space was the side effect.
+        # Re-scale the template's own setting by how much wider the page got.
+        # The old scale paginated correctly at the old margins, so holding
+        # (content width / usable width) constant reproduces exactly the same
+        # column pagination - without needing to know the font's metrics.
         usable_width_in = PAPER_WIDTH_IN - left_margin_in - right_margin_in
-        widest_in = max(
-            sum(_column_width_in(worksheet, c) for c in range(start, end + 1))
-            for start, end in groups
-        )
-        width_limit = usable_width_in / widest_in if widest_in > 0 else 1.0
-        height_limit = usable_in / (current_total / POINTS_PER_INCH)
-        # 2% back off so a printer's own unprintable edge does not tip a page over.
-        print_scale = min(width_limit, height_limit, 1.0) * 0.98
-        worksheet.page_setup.scale = max(10, min(400, int(print_scale * 100)))
+        if previous_usable_width_in > 0:
+            widened = usable_width_in / previous_usable_width_in
+        else:
+            widened = 1.0
+        candidate = min(previous_scale * widened, 100.0)
+        # Do not let the taller scale push the block off the bottom either.
+        content_height_in = current_total / POINTS_PER_INCH
+        if content_height_in > 0:
+            candidate = min(candidate, 100.0 * usable_in / content_height_in)
+        print_scale = max(10.0, candidate)
+        worksheet.page_setup.scale = int(print_scale)
 
     scale = available_points / current_total
     if scale <= 1.0:

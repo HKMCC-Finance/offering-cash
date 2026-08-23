@@ -167,6 +167,25 @@ def test_print_layout():
     check("scale beats the template's 68%", info4.get("print_scale", 0) > 68,
           f"got {info4.get('print_scale')}")
 
+    # The invariant that actually guarantees the page count does not change:
+    # the fraction of the usable width the content consumes must not grow.
+    # Measuring columns in inches would depend on the workbook's default font,
+    # so the scale is re-derived from the sheet's own previous setting instead.
+    workbook5 = load_workbook(TEMPLATE)
+    sheet5 = workbook5.active
+    sheet5.print_area = "B1:L32"
+    sheet5.col_breaks.append(Break(id=8))
+    sheet5.page_setup.scale = 68
+    sheet5.page_margins.left = sheet5.page_margins.right = 1.0
+    before_ratio = 0.68 / (8.5 - 1.0 - 1.0)
+    info5 = apply_print_layout(sheet5)
+    after_ratio = (sheet5.page_setup.scale / 100.0) / (
+        8.5 - sheet5.page_margins.left - sheet5.page_margins.right)
+    check("column pagination cannot get worse", after_ratio <= before_ratio + 1e-9,
+          f"before {before_ratio:.4f} -> after {after_ratio:.4f}")
+    check("but the report does get bigger on paper",
+          sheet5.page_setup.scale > 68, f"got {sheet5.page_setup.scale}")
+
 
 def test_cash_pipeline():
     print("\n[현금] parsing, alignment and 2차 subtraction (#1)")
