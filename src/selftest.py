@@ -125,6 +125,11 @@ def test_print_layout():
     check("row heights grown to fill page", after > before, f"{before} -> {after}")
     check("margins reduced", sheet.page_margins.top == 0.25 and sheet.page_margins.bottom == 0.25)
     check("fitToPage enabled", sheet.sheet_properties.pageSetUpPr.fitToPage is True)
+    # Equal margins do not centre the table: without this Excel pins it to the
+    # top margin and drops all the leftover height underneath, which is what
+    # made the printed bottom margin look far bigger than the top one.
+    check("content centred vertically", sheet.print_options.verticalCentered is True)
+    check("content centred horizontally", sheet.print_options.horizontalCentered is True)
     apply_print_layout(sheet)
     again = sum((sheet.row_dimensions[r].height or 15.0) for r in range(1, sheet.max_row + 1))
     check("idempotent on re-run", abs(again - after) < 0.5)

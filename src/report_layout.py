@@ -70,6 +70,7 @@ def apply_print_layout(worksheet, *, paper_height_in: float = 11.0,
                        min_row_height: float = DEFAULT_ROW_HEIGHT,
                        max_row_height: float = 45.0,
                        fill_ratio: float = 1.0,
+                       vertical_center: bool = True,
                        set_print_area: bool = True) -> dict:
     """Shrink page margins and grow row heights so the report fills the page.
 
@@ -99,7 +100,12 @@ def apply_print_layout(worksheet, *, paper_height_in: float = 11.0,
 
     worksheet.page_setup.orientation = "portrait"
     worksheet.print_options.horizontalCentered = True
-    worksheet.print_options.verticalCentered = False
+    # Equal margins alone do not centre anything: Excel pins the block to the
+    # top margin and lets every bit of leftover height fall below it. On the
+    # offering report that put 0.25" above the table and 2.02" under it, which
+    # reads as a bottom margin eight times the top one. Centring splits the
+    # slack evenly instead.
+    worksheet.print_options.verticalCentered = vertical_center
 
     groups = _column_page_groups(worksheet)
     has_manual_breaks = len(groups) > 1
