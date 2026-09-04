@@ -50,22 +50,47 @@ python src/check_scan.py --img_dir <scan folder> --report_file <report.xlsx>
 | Option | Purpose |
 |---|---|
 | `--order` | `scan` (default), `filename`, or `checknum`. `scan` writes rows in the order the checks physically went through the scanner. |
-| `--backend` | `legacy` (default, EasyOCR + TrOCR), `paddleocr`, `qwen-vl`. |
+| `--backend` | `qwen-vl` (default), `legacy` (EasyOCR + TrOCR), `paddleocr`. |
 | `--roster` | CSV/TXT of known donor names; OCR output is fuzzy-matched against it. |
 | `--roi-config` | JSON of region boxes, defaults to `src/check_rois.json`. |
-| `--prefer-amount` | `courtesy` (default) or `legal` when the two reads disagree. |
+| `--allow-single-read` | Write an amount even when the two readings disagree (default: prefer the words). |
 | `--summary-anchor` | `row,col` anchor for the 수표정리 summary block. |
 | `--review-file` | Where to write the review sheet (defaults beside the report). |
-| `--print-layout` | Apply the print layout after writing. |
+| `--no-print-layout` | Skip the print layout (margins, scale, centring). Applied by default. |
 | `--no-highlight` | Do not shade rows that need review. |
 
-### Amount reading
+### How the reading works
 
-Every check carries the amount twice: the courtesy box (numerals, upper right)
-and the legal line (handwritten words). Both are read and reconciled. Rows
-where the two disagree, where only one could be read, or where the name did not
-match the roster are shaded in the report and listed in the review sheet
-(`<report>_검토.xlsx`) alongside the raw OCR text.
+The default `qwen-vl` backend shows the whole check to a vision-language model
+(Qwen2.5-VL-3B, run locally on the GPU) and asks for the payer and both amount
+readings in one pass. It is told what the document is, so it reads the amount
+as an amount rather than transcribing glyph by glyph - which is what the
+character-level OCR did badly, turning a handwritten `10` into `/0` or `(0`.
+
+The model reports the **digits** (the box after the `$`) and the **words** (the
+line below) separately and is explicitly told not to reconcile them. The words
+win: measured on 19 real checks, the two disagreed twice and the words were
+right both times - the digits had read the *check number* as the amount. Taking
+the words scored 19/19; taking the digits wrote two wrong numbers. The digits
+are kept as a cross-check, and a disagreement shades the row and is explained
+in the review sheet (`<report>_검토.xlsx`) rather than being hidden.
+
+A field the model will not commit to comes back empty, so a volunteer fills a
+blank cell instead of a plausible wrong number reaching a financial record.
+
+Measured against human-corrected reports for 2026-08-16 and 2026-08-30:
+
+| | old `legacy` OCR | `qwen-vl` |
+|---|---|---|
+| amounts correct | 6/10 | **19/19** |
+| silently wrong | 1 | **0** |
+| payer names | 7/10 | 18/19 |
+| per check | 8.3s | 3.3s |
+| startup | ~60s | 10.7s |
+
+Requires a CUDA GPU and a CUDA build of torch; on CPU it runs but is far too
+slow to be worth using. Check numbers are never read by OCR - they come from
+the scanner's filename, which was correct on all 19.
 
 ### Check summary (수표정리)
 
@@ -85,9 +110,23 @@ rate, name CER, and how many actual errors the review flag caught.
 
 ## Print layout
 
-`src/report_layout.py` shrinks the page margins to 0.25" and grows row heights
-so the report fills the page instead of leaving a wide band of white space.
-Applied automatically by the cash app, and by `--print-layout` for checks.
+`src/report_layout.py` shrinks the page margins to 0.25", centres the table
+vertically, and re-scales to fill the page (68% -> 83% on the production
+template) while respecting the manual column break that puts the cash summary
+on page 1 and the check listing on page 2. Applied automatically by both the
+cash app and the check scanner.
+
+## How volunteers run it
+
+`HKMCC_CheckScan_v3.exe` in `E:\Check Scanner execution V3\` is unchanged and
+still runs `python3 .\check_scan_v3.py --img_dir ... --report_file ...`. That
+file is now a shim: it re-executes the same arguments under `E:\CashCounting\.venv`
+and `src/check_scan.py`, because the `python3` on PATH is the Windows Store one
+with different torch and transformers versions than this was tested against.
+
+To change behaviour, edit this repo - not the copy in that folder. The previous
+OCR code is kept there as `check_scan_v3.py.backup_20260904`; restoring it is
+the rollback.
 
 ## On-site testing
 
@@ -134,8 +173,9 @@ models, and prints the list of things that still require a real test on site.
   different file — it puts the denomination labels in column A and is missing
   the 수표정리 summary block entirely — do not use it as a reference beyond
   row 14.
-- `src/check_rois.json` holds standard-layout estimates, not measured values.
-  Retune against real scans (see `docs/CHURCH_TEST_RUNBOOK.md`).
+- `src/check_rois.json` was measured against the 08-16 and 08-30 batches, but
+  the default `qwen-vl` backend does not use it - it reads the whole check. The
+  boxes only matter for the `legacy` and `paddleocr` backends.
 - `check_summary.py`'s `DEFAULT_PREDEFINED_AMOUNTS` ($5/10/20/25/50/100) do not
   match the production template's 수표정리 block, which has 11 predefined rows
   ($5/10/15/20/25/30/45/50/100/200/600) that already auto-tally via `COUNTIF`
