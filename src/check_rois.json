@@ -1,7 +1,7 @@
 {
-  "_comment": "Fractional (x0, y0, x1, y1) regions on a scanned check. Retune these against real scans at the church - they are standard-layout estimates, not measured values.",
-  "payer_name": [0.02, 0.02, 0.55, 0.22],
-  "courtesy_amount": [0.70, 0.30, 0.99, 0.52],
-  "legal_amount": [0.03, 0.48, 0.88, 0.66],
-  "memo": [0.03, 0.78, 0.50, 0.93]
+  "_comment": "Fractional (x0, y0, x1, y1) regions on a scanned check. MEASURED 2026-09-04 against the 08-16 and 08-30 batches (19 scans, ~1202x550, aspect 2.19) - not estimates. Re-check if the scanner or check stock changes.",
+  "payer_name": [0.03, 0.05, 0.50, 0.30],
+  "courtesy_amount": [0.72, 0.31, 0.96, 0.52],
+  "legal_amount": [0.05, 0.43, 0.62, 0.60],
+  "memo": [0.03, 0.74, 0.50, 0.92]
 }

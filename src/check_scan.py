@@ -106,20 +106,61 @@ def parse_check_number(filename: str) -> Optional[int]:
 # Name handling
 # --------------------------------------------------------------------------
 
+# Tokens that mark a payer-block line as address / contact detail rather than a
+# name. The original "starts with a digit" test alone let real cases through:
+# a payer whose address line is "Los Altos, CA 94022" has no street number, so
+# the whole address was kept as part of the name.
+_STREET_WORDS = r"(?:ave|avenue|st|street|dr|drive|rd|road|blvd|ln|lane|ct|court|way|pl|place|cir|circle|apt|suite|ste|hall|pkwy|terrace|ter)"
+_ADDRESS_PATTERNS = (
+    re.compile(r"^\d"),                                  # 4779 Sutcliff Ave
+    re.compile(r"[A-Z]{2}\s*\d{5}(?:-\d{4})?"),      # CA 95118 / CA 94024-5907
+    re.compile(r"\d{5}(?:-\d{4})?"),                 # bare ZIP
+    re.compile(r"\d{3}[-.\s]\d{3}[-.\s]\d{4}"),          # 408-309-3828
+    re.compile(r"1[-.\s]?800"),                       # 1-800 banner text
+    re.compile(r"www\.|\.com", re.I),                 # printed bank URLs
+    re.compile(r"" + _STREET_WORDS + r"\.?$", re.I),   # ends in a street word
+    re.compile(r"^\s*" + _STREET_WORDS + r"", re.I),
+)
+
+
+def looks_like_address(part: str) -> bool:
+    """True when a payer-block fragment is address or contact detail."""
+    part = (part or "").strip()
+    if not part:
+        return False
+    return any(p.search(part) for p in _ADDRESS_PATTERNS)
+
+
 def extract_address_and_names(name_text: str):
     """Split a payer block into names and address.
 
-    Anything from the first comma-separated part that starts with a digit
-    onwards is treated as the street address.
+    Names sit at the top of the block, so everything from the first
+    address-looking fragment onwards is treated as address. Trailing noise on
+    an otherwise good name line (a printed date such as "Jookyung Lee 06-10")
+    is trimmed rather than dropping the whole line.
     """
-    parts = name_text.split(",")
+    parts = [p.strip() for p in name_text.split(",")]
+    flags = [looks_like_address(p) for p in parts]
+
+    # A bare city ("Los Altos") matches nothing on its own, but it always sits
+    # immediately before the "ST ZIP" fragment, so mark that neighbour too.
+    state_zip = re.compile(r"^[A-Z]{2}\s*\d{5}(?:-\d{4})?$")
+    for i, part in enumerate(parts):
+        if state_zip.match(part) and i > 0:
+            flags[i - 1] = True
+
     names, address_parts = [], []
     found_address = False
-    for part in parts:
-        part = part.strip()
-        if not found_address and re.match(r"^\d+", part):
+    for part, is_addr in zip(parts, flags):
+        if is_addr:
             found_address = True
-        (address_parts if found_address else names).append(part)
+        if found_address:
+            address_parts.append(part)
+        else:
+            # strip trailing printed dates / reference numbers off a name line
+            cleaned = re.sub(r"\s+\d[\d\-/.]*$", "", part).strip()
+            if cleaned:
+                names.append(cleaned)
     return (", ".join(names) if names else None,
             ", ".join(address_parts) if address_parts else None)
 
@@ -230,7 +271,8 @@ def read_amount(image, backend, rois, prefer: str = "courtesy") -> AmountReading
 
 def extract_check(image_path: str, backend, rois, sequence: int,
                   roster: Sequence[str] = (), prefer_amount: str = "courtesy",
-                  name_confidence_floor: float = 0.5) -> CheckRecord:
+                  name_confidence_floor: float = 0.5,
+                  require_agreement: bool = True) -> CheckRecord:
     """OCR a single check image into a CheckRecord."""
     import cv2  # imported here so ordering/report helpers work without OpenCV
 
@@ -268,6 +310,11 @@ def extract_check(image_path: str, backend, rois, sequence: int,
     if amount.needs_review:
         record.needs_review = True
         record.notes.append(f"amount {amount.status}")
+    if require_agreement and amount.status != "agree":
+        # Write nothing rather than a number we cannot corroborate. Both reads
+        # stay on the record so the review sheet still shows what was seen.
+        record.amount = None
+        record.notes.append("amount withheld (no agreement)")
 
     if not record.payer_name:
         record.needs_review = True
@@ -358,6 +405,7 @@ def process_checks(check_directory: str, report_filename: str, *, backend,
                    roster_path: Optional[str] = None,
                    review_path: Optional[str] = None,
                    prefer_amount: str = "courtesy",
+                   require_agreement: bool = True,
                    highlight_review: bool = True,
                    summary_anchor: Optional[tuple] = None,
                    print_layout: bool = False) -> List[CheckRecord]:
@@ -370,7 +418,7 @@ def process_checks(check_directory: str, report_filename: str, *, backend,
 
     records = [
         extract_check(path, backend, rois, sequence=index, roster=roster,
-                      prefer_amount=prefer_amount)
+                      prefer_amount=prefer_amount, require_agreement=require_agreement)
         for index, path in enumerate(tqdm(paths, desc="Processing Checks", unit="file"), start=1)
     ]
 
@@ -411,6 +459,9 @@ def main(argv=None):
                         help="which read wins when the two amounts disagree")
     parser.add_argument("--summary-anchor", default=None,
                         help="'row,col' anchor for the 수표정리 summary block")
+    parser.add_argument("--allow-single-read", action="store_true",
+                        help="write the best available amount even when the two "
+                             "reads disagree (default: leave the cell blank)")
     parser.add_argument("--no-highlight", action="store_true",
                         help="do not shade rows that need review")
     parser.add_argument("--print-layout", action="store_true",
@@ -434,6 +485,7 @@ def main(argv=None):
         roster_path=args.roster,
         review_path=args.review_file,
         prefer_amount=args.prefer_amount,
+        require_agreement=not args.allow_single_read,
         highlight_review=not args.no_highlight,
         summary_anchor=_parse_anchor(args.summary_anchor),
         print_layout=args.print_layout,

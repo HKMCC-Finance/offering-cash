@@ -101,6 +101,36 @@ def test_roster_matching():
     check("unknown name not forced", match_roster("Xyzzy Nobody", roster)[2] is False)
 
 
+def test_name_cleanup():
+    print("\n[수표] payer name vs address")
+    from check_scan import extract_address_and_names, looks_like_address
+    cases = [
+        ("Hyungwook Kim, Namhee Lim, 4779 Sutcliff Ave, San Jose, CA 95118",
+         "Hyungwook Kim, Namhee Lim", "street number"),
+        ("SUNHEE LEE, Los Altos, CA 94022", "SUNHEE LEE", "city with no street number"),
+        ("Jookyung Lee 06-10, 120 E Remington Dr APT 308, Sunnyvale, CA 94087",
+         "Jookyung Lee", "printed date on the name line"),
+        ("Unlimited 1-800-270-9481, www.pngsvunlimited.com, SOPHIA H. YOO",
+         None, "bank banner above the name"),
+        ("JAI ZOON CHOI, YOUNG SOOK CHOI, 1542 COUNTRY CLUB DR, LOS ALTOS, CA 94024-5907",
+         "JAI ZOON CHOI, YOUNG SOOK CHOI", "zip+4"),
+    ]
+    for text, expected, why in cases:
+        check(f"name: {why}", extract_address_and_names(text)[0] == expected,
+              f"got {extract_address_and_names(text)[0]!r}")
+    check("phone is address", looks_like_address("HM. 408-309-3828"))
+    check("plain name is not address", not looks_like_address("KWANG K KIM"))
+
+
+def test_amount_policy():
+    print("\n[수표] amount write policy")
+    from check_fields import reconcile_amount
+    # agreeing reads are written; anything else is withheld by default
+    check("agreement writes a value", reconcile_amount(50.0, 50.0)[0] == 50.0)
+    check("mismatch is flagged", reconcile_amount(50.0, 20.0)[2] is True)
+    check("single read is flagged", reconcile_amount(50.0, None)[2] is True)
+
+
 def test_check_summary():
     print("\n[수표] 수표정리 summary (#4)")
     rows = build_check_summary([20, 20, 50, 100, 5, 37.50, 150, 10, None, 25, 37.50])
@@ -281,7 +311,8 @@ def main():
     print("Offering pipeline self-test (no machine / scanner / OCR required)")
     print("=" * 68)
     for test in (test_amount_parsing, test_reconciliation, test_scan_order,
-                 test_roster_matching, test_check_summary, test_print_layout,
+                 test_roster_matching, test_name_cleanup, test_amount_policy,
+                 test_check_summary, test_print_layout,
                  test_cash_pipeline, test_report_writing):
         test()
 
