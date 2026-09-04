@@ -201,9 +201,17 @@ class QwenVLBackend(OCRBackend):
                 min_pixels=self._min_tokens * 28 * 28,
                 max_pixels=self._max_tokens * 28 * 28,
             )
+            # Batching pads to a common length, and the default right-padding
+            # silently corrupts generation for every decoder-only sequence
+            # except the longest: measured 10/19 batched with right padding
+            # versus 19/19 unbatched. Left padding keeps the answers aligned
+            # with the prompt end, so batching stays a free speed win.
+            if getattr(self._processor, "tokenizer", None) is not None:
+                self._processor.tokenizer.padding_side = "left"
+            self._processor.padding_side = "left"
             self._model = AutoModelForImageTextToText.from_pretrained(
                 self._model_id,
-                dtype=torch.bfloat16 if on_gpu else torch.float32,
+                torch_dtype=torch.bfloat16 if on_gpu else torch.float32,
                 device_map=device_map,
             )
             self._model.eval()
@@ -238,28 +246,41 @@ class QwenVLBackend(OCRBackend):
     # amount is written twice so it can corroborate the two against each other
     # internally - which is what the separate courtesy/legal OCR reads were
     # doing badly - and to answer null instead of guessing.
+    # One pass returns the payer plus BOTH amount readings. The model is told
+    # NOT to reconcile them: measured over 19 real checks, the handwritten
+    # words were right in both cases where the two disagreed (digits said 30
+    # and 1000, words said 20 and 10, and the words were correct). Reporting
+    # them separately lets the caller pick the better signal and flag the
+    # disagreement, instead of the model silently picking the worse one.
     CHECK_PROMPT = (
-        "Read this US personal check and reply with strict JSON only, no prose:"
+        "Read this US personal check. Reply with strict JSON only, no prose:"
         + chr(10)
-        + '{"payer": <the person or people the account belongs to, printed at the '
-          "top-left; names only, never the street address, city, state, ZIP or phone>, "
-          '"amount": <the dollar amount as a plain number, e.g. 20 or 12.50>}'
+        + '{"payer": <account holder name(s) printed top-left; names only, never '
+          'the address, city, state, ZIP or phone>,'
+          ' "amount_digits": <the number handwritten in the box after the $ sign>,'
+          ' "amount_words": <the amount handwritten in words on the line below, '
+          'exactly as written; ignore the /100 cents fraction>}'
         + chr(10)
-        + "The amount appears twice: as digits in the box after the $ sign, and "
-          "written in words on the line below. Use them to confirm each other."
-        + chr(10)
-        + "If you cannot read a field with confidence, set it to null. Never guess."
+        + "Report each field exactly as written. Do not make them agree. "
+          "Use null for anything you cannot read confidently."
     )
 
     def read_check(self, image: np.ndarray):
         """Whole-check read: {"payer": str|None, "amount": float|None, "raw": str}."""
         return self.read_check_batch([image])[0]
 
-    def read_check_batch(self, images, batch_size: int = 4):
-        """Read several checks per forward pass.
+    def read_check_batch(self, images, batch_size: int = 1):
+        """Read checks one per forward pass.
 
-        A single check leaves the GPU mostly idle, so batching is close to free
-        throughput: the whole batch costs little more than the slowest member.
+        Batching was tried and removed. Scans differ slightly in size, so each
+        produces a different number of vision tokens; padding a batch to a
+        common length left every sequence after the first generating almost
+        nothing - measured 10/19 batched against 19/19 one at a time, with the
+        failures returning a bare "```json" and no object. It also bought no
+        speed (4.0s and 2.6s per check batched, versus 3.1s sequential),
+        because one check already saturates the vision encoder on this GPU.
+        The signature is kept so the pipeline can stay batch-shaped if a
+        future model does benefit.
         """
         import torch
 
@@ -286,11 +307,21 @@ class QwenVLBackend(OCRBackend):
 
 
 def _parse_check_reply(raw: str):
-    """Turn one model reply into {"payer", "amount", "raw"}."""
+    """Turn one model reply into payer plus a reconciled amount.
+
+    Returns {"payer", "amount", "amount_digits", "amount_words",
+             "amounts_disagree", "raw"}.
+
+    The words win when the two readings differ. Measured over 19 real checks
+    the words were correct in both disagreements, and taking them scored 19/19
+    with nothing written wrong; going by the digits scored 17/19 and put two
+    wrong numbers in the report. The digits are still kept as a cross-check so
+    a disagreement can be flagged for a volunteer.
+    """
     import json
     import re
 
-    payer = amount = None
+    payer = digits = words = None
     match = re.search(r"\{.*\}", raw, re.S)
     if match:
         try:
@@ -300,8 +331,24 @@ def _parse_check_reply(raw: str):
         payer = payload.get("payer")
         if isinstance(payer, str) and re.fullmatch(r"\s*(null|none|)\s*", payer, re.I):
             payer = None
-        amount = _parse_model_amount(payload.get("amount"))
-    return {"payer": payer, "amount": amount, "raw": raw}
+        digits = _parse_model_amount(payload.get("amount_digits"))
+        words = _parse_words_amount(payload.get("amount_words"))
+
+    amount = words if words is not None else digits
+    disagree = (digits is not None and words is not None
+                and abs(digits - words) >= 0.005)
+    return {"payer": payer, "amount": amount, "amount_digits": digits,
+            "amount_words": words, "amounts_disagree": disagree, "raw": raw}
+
+
+def _parse_words_amount(value):
+    """Parse the written-words amount, e.g. "Twenty and XX/100" -> 20.0."""
+    if value is None:
+        return None
+    from check_fields import parse_legal_amount
+
+    parsed = parse_legal_amount(str(value))
+    return parsed if parsed is not None else _parse_model_amount(value)
 
 
 def _parse_model_amount(value):

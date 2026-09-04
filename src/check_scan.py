@@ -24,6 +24,7 @@ from typing import List, Optional, Sequence
 
 import pandas as pd
 from openpyxl import load_workbook
+from openpyxl.cell.cell import MergedCell
 from openpyxl.styles import PatternFill
 from tqdm import tqdm
 
@@ -416,8 +417,13 @@ def write_report(records: Sequence[CheckRecord], report_path: str, *,
     #     batch behind, mixing last week's checks into this week's report.
     for row in range(CHECK_START_ROW, CHECK_END_ROW + 1):
         for column in columns:
-            sheet.cell(row=row, column=column).value = None
-            sheet.cell(row=row, column=column).fill = PatternFill(fill_type=None)
+            cell = sheet.cell(row=row, column=column)
+            # a merged cell's value is read-only; the template merges I32:K32
+            # just below the block, and a future edit could merge inside it
+            if isinstance(cell, MergedCell):
+                continue
+            cell.value = None
+            cell.fill = PatternFill(fill_type=None)
 
     for offset, record in enumerate(records):
         row = CHECK_START_ROW + offset
@@ -508,7 +514,18 @@ def _record_from_reply(image_path: str, reply, sequence: int,
     record.roster_score = score
     record.roster_matched = matched
     record.amount = reply.get("amount")
-    record.amount_status = "vlm" if record.amount is not None else "unreadable"
+    record.courtesy_amount = reply.get("amount_digits")
+    record.legal_amount = reply.get("amount_words")
+    if reply.get("amounts_disagree"):
+        # The words are written into the report because they measured more
+        # reliable, but a volunteer should still eyeball this one.
+        record.amount_status = "digits/words differ"
+        record.needs_review = True
+        record.notes.append(
+            f"digits read {reply.get('amount_digits')}, words read "
+            f"{reply.get('amount_words')} - words used")
+    else:
+        record.amount_status = "vlm" if record.amount is not None else "unreadable"
     if record.amount is None:
         record.needs_review = True
         record.notes.append("amount not read confidently")
