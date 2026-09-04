@@ -285,6 +285,32 @@ def extract_check(image_path: str, backend, rois, sequence: int,
         record.needs_review = True
         return record
 
+    # Vision-language backends read the whole check in one pass: they are told
+    # what the document is, so the amount is read as an amount instead of being
+    # transcribed glyph by glyph. Anything the model will not commit to comes
+    # back None and stays blank for a volunteer to fill.
+    whole = backend.read_check(image)
+    if whole is not None:
+        record.payer_name_raw = whole.get("raw", "")
+        names, _ = extract_address_and_names(whole.get("payer") or "")
+        record.payer_name = names
+        record.amount = whole.get("amount")
+        record.amount_status = "vlm" if record.amount is not None else "unreadable"
+        resolved, score, matched = match_roster(record.payer_name, roster)
+        record.payer_name = resolved
+        record.roster_score = score
+        record.roster_matched = matched
+        if record.amount is None:
+            record.needs_review = True
+            record.notes.append("amount not read confidently")
+        if not record.payer_name:
+            record.needs_review = True
+            record.notes.append("name not read confidently")
+        elif roster and not matched:
+            record.needs_review = True
+            record.notes.append("no roster match")
+        return record
+
     try:
         name_result = backend.read_printed(upscale(crop(image, rois["payer_name"])))
         record.payer_name_raw = name_result.text
@@ -416,11 +442,28 @@ def process_checks(check_directory: str, report_filename: str, *, backend,
     if not paths:
         raise FileNotFoundError(f"No '*Front.tif' images found in {check_directory}")
 
-    records = [
-        extract_check(path, backend, rois, sequence=index, roster=roster,
-                      prefer_amount=prefer_amount, require_agreement=require_agreement)
-        for index, path in enumerate(tqdm(paths, desc="Processing Checks", unit="file"), start=1)
-    ]
+    # A vision-language backend reads whole checks in batches, which keeps the
+    # GPU busy instead of paying per-image latency one check at a time.
+    batch_reader = getattr(backend, "read_check_batch", None)
+    if batch_reader is not None:
+        import cv2
+
+        images, loaded = [], []
+        for path in paths:
+            image = cv2.imread(path)
+            if image is not None:
+                images.append(image)
+                loaded.append(path)
+        replies = batch_reader(images)
+        records = []
+        for index, (path, reply) in enumerate(zip(loaded, replies), start=1):
+            records.append(_record_from_reply(path, reply, index, roster))
+    else:
+        records = [
+            extract_check(path, backend, rois, sequence=index, roster=roster,
+                          prefer_amount=prefer_amount, require_agreement=require_agreement)
+            for index, path in enumerate(tqdm(paths, desc="Processing Checks", unit="file"), start=1)
+        ]
 
     write_report(records, report_filename, highlight_review=highlight_review,
                  summary_anchor=summary_anchor, print_layout=print_layout)
@@ -432,6 +475,31 @@ def process_checks(check_directory: str, report_filename: str, *, backend,
     print(f"\nProcessed {len(records)} checks; {flagged} flagged for review.")
     print(f"Review sheet: {review_path}")
     return records
+
+
+def _record_from_reply(image_path: str, reply, sequence: int,
+                       roster: Sequence[str] = ()) -> CheckRecord:
+    """Build a CheckRecord from a one-pass whole-check read."""
+    record = CheckRecord(sequence=sequence, filename=os.path.basename(image_path),
+                         check_number=parse_check_number(image_path), payer_name=None)
+    record.payer_name_raw = reply.get("raw", "")
+    names, _ = extract_address_and_names(reply.get("payer") or "")
+    resolved, score, matched = match_roster(names, roster)
+    record.payer_name = resolved
+    record.roster_score = score
+    record.roster_matched = matched
+    record.amount = reply.get("amount")
+    record.amount_status = "vlm" if record.amount is not None else "unreadable"
+    if record.amount is None:
+        record.needs_review = True
+        record.notes.append("amount not read confidently")
+    if not record.payer_name:
+        record.needs_review = True
+        record.notes.append("name not read confidently")
+    elif roster and not matched:
+        record.needs_review = True
+        record.notes.append("no roster match")
+    return record
 
 
 def _parse_anchor(value: Optional[str]):

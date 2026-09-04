@@ -47,6 +47,19 @@ class OCRBackend(ABC):
     def read_handwriting(self, image: np.ndarray) -> OCRResult:
         """Read handwritten text from a BGR image region."""
 
+    def read_check(self, image: "np.ndarray"):
+        """Read a whole check in one pass, returning {"payer", "amount"}.
+
+        Only vision-language backends can do this - they are told what the
+        document is, so they read the amount as an amount rather than
+        transcribing glyphs. Backends that cannot return None, and the caller
+        falls back to reading each field separately.
+
+        A field the model is not confident about comes back None, so the
+        report cell is left blank for a volunteer rather than guessed at.
+        """
+        return None
+
     def warmup(self) -> None:
         """Optional: load weights ahead of the first real call."""
 
