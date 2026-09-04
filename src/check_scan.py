@@ -43,6 +43,9 @@ from report_layout import apply_print_layout
 # Where the check block lives in the report. These match the original code's
 # offsets; confirm them against the production template before changing.
 CHECK_START_ROW = 4
+# Last row of the check block. The template's 수표정리 tally reads $L$4:$L$30,
+# so this is the range the report itself considers "the checks".
+CHECK_END_ROW = 30
 SEQ_COL = 9          # 순번
 CHECK_NUM_COL = 10   # CHECK #
 PAYER_COL = 11       # 발행자
@@ -404,15 +407,31 @@ def write_report(records: Sequence[CheckRecord], report_path: str, *,
     """Fill the check block of the report workbook."""
     workbook = load_workbook(report_path)
     sheet = workbook.active
+    columns = (SEQ_COL, CHECK_NUM_COL, PAYER_COL, AMOUNT_COL)
+
+    # Clear the whole block first. Two bugs live here otherwise:
+    #   - openpyxl's cell(value=None) is a no-op, so a field the model declined
+    #     would silently keep whatever was in that cell before;
+    #   - a batch smaller than the previous one would leave the tail of the old
+    #     batch behind, mixing last week's checks into this week's report.
+    for row in range(CHECK_START_ROW, CHECK_END_ROW + 1):
+        for column in columns:
+            sheet.cell(row=row, column=column).value = None
+            sheet.cell(row=row, column=column).fill = PatternFill(fill_type=None)
 
     for offset, record in enumerate(records):
         row = CHECK_START_ROW + offset
-        sheet.cell(row=row, column=SEQ_COL, value=record.sequence)
-        sheet.cell(row=row, column=CHECK_NUM_COL, value=record.check_number)
-        sheet.cell(row=row, column=PAYER_COL, value=record.payer_name)
-        sheet.cell(row=row, column=AMOUNT_COL, value=record.amount)
+        if row > CHECK_END_ROW:
+            raise ValueError(
+                f"{len(records)} checks will not fit rows "
+                f"{CHECK_START_ROW}-{CHECK_END_ROW} of the report")
+        # assign directly: cell(value=None) would not clear
+        sheet.cell(row=row, column=SEQ_COL).value = record.sequence
+        sheet.cell(row=row, column=CHECK_NUM_COL).value = record.check_number
+        sheet.cell(row=row, column=PAYER_COL).value = record.payer_name
+        sheet.cell(row=row, column=AMOUNT_COL).value = record.amount
         if highlight_review and record.needs_review:
-            for column in (SEQ_COL, CHECK_NUM_COL, PAYER_COL, AMOUNT_COL):
+            for column in columns:
                 sheet.cell(row=row, column=column).fill = REVIEW_FILL
 
     if summary_anchor:

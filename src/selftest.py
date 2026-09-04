@@ -295,6 +295,26 @@ def test_report_writing():
     check("template formulas preserved", sheet["B14"].value == "=SUM(B7:B13)")
     check("summary written", sheet.cell(row=20, column=9).value == 5)
 
+    # openpyxl's cell(value=None) is a no-op, so a declined field used to keep
+    # whatever was already in that cell, and a smaller batch left the tail of
+    # the previous one behind. Both would put stale checks in a financial record.
+    stale = [
+        CheckRecord(1, "a.tif", 111, "Someone", amount=99.0),
+        CheckRecord(2, "b.tif", 222, "Another", amount=88.0),
+        CheckRecord(3, "c.tif", 333, "Third", amount=77.0),
+    ]
+    write_report(stale, report)
+    fewer = [CheckRecord(1, "a.tif", 111, None, amount=None, needs_review=True)]
+    write_report(fewer, report)
+    sheet2 = load_workbook(report).active
+    check("declined amount leaves a blank cell",
+          sheet2.cell(row=CHECK_START_ROW, column=12).value is None,
+          f"got {sheet2.cell(row=CHECK_START_ROW, column=12).value!r}")
+    check("shorter batch clears the previous tail",
+          all(sheet2.cell(row=CHECK_START_ROW + i, column=10).value is None
+              for i in (1, 2)),
+          "rows from the longer batch survived")
+
 
 NEEDS_REAL_TEST = [
     "1차/2차 실제 카운팅 (BC-40 누적 여부 확인) - 두 PDF 모두 보관할 것",
